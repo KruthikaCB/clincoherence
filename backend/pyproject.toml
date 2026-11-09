@@ -53,6 +53,9 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+app = ["fixtures/evidence/*.json"]
+
 # --- Tool Configuration ---
 
 [tool.ruff]

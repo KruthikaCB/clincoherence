@@ -1,0 +1,31 @@
+{
+  "label": "SYNTHETIC_FIXTURE_ONLY",
+  "sources": [
+    {
+      "source_id": "synthetic-t2dm-context",
+      "version": "fixture-1",
+      "edition": "synthetic-edition-1",
+      "label": "SYNTHETIC_FIXTURE_ONLY",
+      "title": "Synthetic structured-context fixture; not clinical evidence",
+      "publisher": "ClinCoherence synthetic fixtures",
+      "canonical_location": "fixture://clincoherence/synthetic-context",
+      "locators": [
+        "section:structured-context"
+      ],
+      "content_hash": "69d74bda17cf035c591a83f85fede3651ce71a564de214d6646bf86e1eefc704"
+    }
+  ],
+  "units": [
+    {
+      "source_id": "synthetic-t2dm-context",
+      "source_version": "fixture-1",
+      "source_content_hash": "69d74bda17cf035c591a83f85fede3651ce71a564de214d6646bf86e1eefc704",
+      "unit_id": "synthetic-context-unit",
+      "version": "fixture-1",
+      "label": "SYNTHETIC_FIXTURE_ONLY",
+      "locator": "section:structured-context",
+      "content": "SYNTHETIC FIXTURE ONLY. Tests evidence resolution and structured field matching. Contains no clinical recommendations and is not authoritative clinical evidence.",
+      "content_hash": "c1d6e6f9b65dec134f07e1f6d0e32e62d6aa8edbedce2966389c544543439c82"
+    }
+  ]
+}

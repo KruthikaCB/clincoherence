@@ -1,0 +1,41 @@
+{
+  "manifest_id": "synthetic-evidence-approvals",
+  "version": "fixture-1",
+  "label": "SYNTHETIC_FIXTURE_ONLY",
+  "approvals": [
+    {
+      "evidence": {
+        "source_id": "synthetic-t2dm-context",
+        "source_version": "fixture-1",
+        "source_edition": "synthetic-edition-1",
+        "source_content_hash": "69d74bda17cf035c591a83f85fede3651ce71a564de214d6646bf86e1eefc704",
+        "unit_id": "synthetic-context-unit",
+        "unit_version": "fixture-1",
+        "unit_content_hash": "c1d6e6f9b65dec134f07e1f6d0e32e62d6aa8edbedce2966389c544543439c82"
+      },
+      "rule_id": "synthetic-patient-lab-context",
+      "rule_version": "fixture-1",
+      "rule_content_hash": "5ebeb4856820917521f8d0f3b692d2c5c0996ccd470558d7e7260b9246a39029",
+      "intended_use": "synthetic-context-testing",
+      "status": "approved",
+      "approval_reference": "milestone-4c-synthetic-only"
+    },
+    {
+      "evidence": {
+        "source_id": "synthetic-t2dm-context",
+        "source_version": "fixture-1",
+        "source_edition": "synthetic-edition-1",
+        "source_content_hash": "69d74bda17cf035c591a83f85fede3651ce71a564de214d6646bf86e1eefc704",
+        "unit_id": "synthetic-context-unit",
+        "unit_version": "fixture-1",
+        "unit_content_hash": "c1d6e6f9b65dec134f07e1f6d0e32e62d6aa8edbedce2966389c544543439c82"
+      },
+      "rule_id": "synthetic-practitioner-lab-context",
+      "rule_version": "fixture-1",
+      "rule_content_hash": "90ee289f6ce1f253b555e6446f43be53ba21b67b1c671b3096776147d493fee5",
+      "intended_use": "synthetic-context-testing",
+      "status": "approved",
+      "approval_reference": "milestone-4c-synthetic-only"
+    }
+  ]
+}

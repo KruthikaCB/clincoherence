@@ -1,0 +1,75 @@
+{
+  "label": "SYNTHETIC_FIXTURE_ONLY",
+  "rules": [
+    {
+      "rule_id": "synthetic-patient-lab-context",
+      "version": "fixture-1",
+      "label": "SYNTHETIC_FIXTURE_ONLY",
+      "domain": "T2DM",
+      "intended_uses": [
+        "synthetic-context-testing"
+      ],
+      "logic_version": "synthetic-structured-context-v1",
+      "evidence": [
+        {
+          "source_id": "synthetic-t2dm-context",
+          "source_version": "fixture-1",
+          "source_edition": "synthetic-edition-1",
+          "source_content_hash": "69d74bda17cf035c591a83f85fede3651ce71a564de214d6646bf86e1eefc704",
+          "unit_id": "synthetic-context-unit",
+          "unit_version": "fixture-1",
+          "unit_content_hash": "c1d6e6f9b65dec134f07e1f6d0e32e62d6aa8edbedce2966389c544543439c82"
+        }
+      ],
+      "requirements": [
+        {
+          "kind": "laboratory",
+          "code": "hba1c",
+          "unit": "%",
+          "qualifiers": [
+            {
+              "field": "attribution",
+              "equals": "patient_reported"
+            }
+          ]
+        }
+      ],
+      "content_hash": "5ebeb4856820917521f8d0f3b692d2c5c0996ccd470558d7e7260b9246a39029"
+    },
+    {
+      "rule_id": "synthetic-practitioner-lab-context",
+      "version": "fixture-1",
+      "label": "SYNTHETIC_FIXTURE_ONLY",
+      "domain": "T2DM",
+      "intended_uses": [
+        "synthetic-context-testing"
+      ],
+      "logic_version": "synthetic-structured-context-v1",
+      "evidence": [
+        {
+          "source_id": "synthetic-t2dm-context",
+          "source_version": "fixture-1",
+          "source_edition": "synthetic-edition-1",
+          "source_content_hash": "69d74bda17cf035c591a83f85fede3651ce71a564de214d6646bf86e1eefc704",
+          "unit_id": "synthetic-context-unit",
+          "unit_version": "fixture-1",
+          "unit_content_hash": "c1d6e6f9b65dec134f07e1f6d0e32e62d6aa8edbedce2966389c544543439c82"
+        }
+      ],
+      "requirements": [
+        {
+          "kind": "laboratory",
+          "code": "hba1c",
+          "unit": "%",
+          "qualifiers": [
+            {
+              "field": "attribution",
+              "equals": "practitioner_managed"
+            }
+          ]
+        }
+      ],
+      "content_hash": "90ee289f6ce1f253b555e6446f43be53ba21b67b1c671b3096776147d493fee5"
+    }
+  ]
+}
