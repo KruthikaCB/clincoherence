@@ -15,10 +15,10 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
 
-
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
+    hide_parameters=True,
     future=True,
 )
 
@@ -44,4 +44,3 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-

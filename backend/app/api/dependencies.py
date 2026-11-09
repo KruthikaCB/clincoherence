@@ -17,7 +17,8 @@ from app.services.authorization import (
     eligible_account,
 )
 
-Database = Annotated[AsyncSession, Depends(get_db)]
+# Clinical response gates must retain the session until ASGI handoff finishes.
+Database = Annotated[AsyncSession, Depends(get_db, scope="request")]
 bearer = HTTPBearer(auto_error=False)
 
 

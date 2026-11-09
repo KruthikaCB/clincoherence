@@ -26,6 +26,7 @@ def migrations():
         migration("0001_foundational_identity"),
         migration("0002_patient_invitations"),
         migration("0003_consent_history"),
+        migration("0004_clinical_facts"),
     ]
 
 
@@ -41,7 +42,7 @@ async def db():
         pytest.fail(
             "Refusing integration target: require postgresql+asyncpg and database ending _test"
         )
-    engine = create_async_engine(url, connect_args={"timeout": 5})
+    engine = create_async_engine(url, connect_args={"timeout": 5}, hide_parameters=True)
     schema = "cc_test_" + uuid4().hex
     try:
         async with engine.connect() as connection:

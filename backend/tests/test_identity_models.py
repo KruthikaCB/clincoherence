@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import MetaData, Table, UniqueConstraint, func, select
+from sqlalchemy import Index, MetaData, Table, UniqueConstraint, func, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import configure_mappers
@@ -28,12 +28,20 @@ def test_migration_matches_model_schema(monkeypatch):
 
     class Recorder:
         @staticmethod
+        def f(name):
+            return name
+
+        @staticmethod
         def create_table(name, *items):
             Table(name, metadata, *items)
 
         @staticmethod
         def create_unique_constraint(name, table, columns):
             metadata.tables[table].append_constraint(UniqueConstraint(*columns, name=name))
+
+        @staticmethod
+        def create_index(name, table, columns, unique=False):
+            Index(name, *(metadata.tables[table].c[column] for column in columns), unique=unique)
 
         @staticmethod
         def execute(statement):
@@ -46,6 +54,9 @@ def test_migration_matches_model_schema(monkeypatch):
     assert set(metadata.tables) == set(Base.metadata.tables)
     dialect = postgresql.dialect()
     for name, table in metadata.tables.items():
+        assert {i.name for i in table.indexes} == {
+            i.name for i in Base.metadata.tables[name].indexes
+        }
         # Constraint order does not affect the generated schema.
         actual = str(CreateTable(table).compile(dialect=dialect))
         expected = str(CreateTable(Base.metadata.tables[name]).compile(dialect=dialect))
