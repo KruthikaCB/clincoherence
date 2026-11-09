@@ -29,6 +29,7 @@ def migrations():
         migration("0004_clinical_facts"),
         migration("0005_supervised_extraction"),
         migration("0006_verification_audit"),
+        migration("0007_response_release_intent"),
     ]
 
 
