@@ -1,5 +1,6 @@
 """ClinCoherence SQLAlchemy ORM models."""
 
+from app.models.consent_history import ConsentHistory
 from app.models.identity import (
     PatientPractitionerConsent,
     PatientProfile,
@@ -9,6 +10,7 @@ from app.models.identity import (
 from app.models.invitation import PatientInvitation
 
 __all__ = [
+    "ConsentHistory",
     "PatientInvitation",
     "PatientPractitionerConsent",
     "PatientProfile",

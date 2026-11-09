@@ -35,6 +35,11 @@ def test_migration_matches_model_schema(monkeypatch):
         def create_unique_constraint(name, table, columns):
             metadata.tables[table].append_constraint(UniqueConstraint(*columns, name=name))
 
+        @staticmethod
+        def execute(statement):
+            # Trigger and backfill behavior is covered by PostgreSQL tests.
+            assert not statement.compile().params  # Migration DDL has no unbound parameters.
+
     for revision in migrations():
         monkeypatch.setattr(revision, "op", Recorder)
         revision.upgrade()

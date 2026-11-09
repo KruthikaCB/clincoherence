@@ -22,7 +22,11 @@ def migration(name="0001_foundational_identity"):
 
 
 def migrations():
-    return [migration("0001_foundational_identity"), migration("0002_patient_invitations")]
+    return [
+        migration("0001_foundational_identity"),
+        migration("0002_patient_invitations"),
+        migration("0003_consent_history"),
+    ]
 
 
 @pytest.fixture
