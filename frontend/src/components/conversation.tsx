@@ -3,6 +3,7 @@
 import { FormEvent, useRef, useState } from "react";
 import FactCard, { FactDetails } from "./fact-card";
 import { Account, AcceptedFact, attribution, Proposal } from "./clinical-types";
+import VerifiedRecords from "./verified-records";
 
 class ApiError extends Error { constructor(public status: number) { super("Request failed"); } }
 async function request<T>(path: string, token?: string, body?: object): Promise<T> {
@@ -143,7 +144,7 @@ export default function Conversation() {
   }
   return <main className="workspace">
     <header><h1>ClinCoherence</h1><p>Synthetic text research prototype - T2DM</p>
-      <p>Extraction and individual confirmation only. No medical advice, diagnosis, prescribing, or runtime clinical verification.</p></header>
+      <p>Patient-specific records, supervised AI extraction and technically verified record restatements. No medical advice, diagnosis or prescribing.</p></header>
     {error && <p role="alert" aria-label="Request error" className="error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!session ? <section className="panel"><h2>Sign in</h2><p>Use an existing activated Patient or Practitioner account.</p>
@@ -164,6 +165,7 @@ export default function Conversation() {
           <button onClick={refresh} disabled={busy}>Refresh server state</button>
         </div></>}
       </section>
+      {patient && !busy && <VerifiedRecords token={session.token} patient={patient} facts={accepted} onDenied={status => fail(new ApiError(status))} />}
       {patient && <div className="conversation-layout">
         <section className="panel" aria-label="Your conversation"><h2>Your conversation</h2>
           <p>Only your own source messages and proposals are shown. Shared record consent does not share transcripts.</p>

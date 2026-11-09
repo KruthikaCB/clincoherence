@@ -14,6 +14,7 @@ export type Proposal = {
 };
 export type AcceptedFact = {
   version_id: string; patient_id: string; fact: Fact; observed_at: string;
+  author_id: string; author_role: Account["role"];
   attribution: Proposal["attribution"]; status: "CONFIRMED";
 };
 export function attribution(value: Proposal["attribution"]) {
