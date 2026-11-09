@@ -5,26 +5,32 @@ const other = "22222222-2222-4222-8222-222222222222";
 const actor = "33333333-3333-4333-8333-333333333333";
 const version = "44444444-4444-4444-8444-444444444444";
 const fact = { version_id: version, patient_id: patient, status: "CONFIRMED",
+  fact_id: "66666666-6666-4666-8666-666666666666", version: 1, previous_version_id: null,
   author_id: actor, author_role: "patient", attribution: "patient_reported",
   observed_at: "2026-01-01T10:00:00Z",
+  entered_at: "2026-01-01T11:00:00Z", correction_reason: null,
+  provenance: { source: "synthetic-fixture", reference: null, data_origin: "synthetic" },
+  entry_method: "STRUCTURED", confirmed_by_id: null, confirmed_at: null,
   fact: { kind: "laboratory", code: "hba1c", value: "7.1000000000", unit: "%" } };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function setup(page: Page, practitioner = false, empty = false) {
   await page.route("**/api/v1/**", route => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/auth/login")) return route.fulfill({ json: { access_token: "synthetic-token" } });
+    if (path.endsWith("/auth/login")) return route.fulfill({ json: { access_token: "synthetic-token", token_type: "bearer" } });
     if (path.endsWith("/auth/me")) return route.fulfill({ json: { id: actor, role: practitioner ? "practitioner" : "patient" } });
+    if (path.endsWith("/auth/profile")) return route.fulfill({ json: { profile_id: practitioner ? version : patient, role: practitioner ? "practitioner" : "patient" } });
+    if (path === "/api/v1/patients") return route.fulfill({ json: [{ patient_id: patient }, { patient_id: other }] });
+    if (path.endsWith("/patients/me/consents")) return route.fulfill({ json: [] });
     if (path.endsWith("/confirmations")) return route.fulfill({ json: [] });
-    if (path.endsWith("/facts")) return route.fulfill({ json: empty ? [] : [{ ...fact, patient_id: path.includes(other) ? other : patient }] });
+    if (path.endsWith("/facts")) return route.fulfill({ json: empty ? [] : [{ ...fact, patient_id: path.includes(other) ? other : patient, fact_id: path.includes(other) ? "77777777-7777-4777-8777-777777777777" : fact.fact_id, version_id: path.includes(other) ? "55555555-5555-4555-8555-555555555555" : version }] });
     return route.fulfill({ status: 404, json: {} });
   });
   await page.goto("/");
   await page.getByLabel("Account identity").fill("synthetic@example.test");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByLabel("Patient profile UUID").fill(patient);
-  await page.getByRole("button", { name: "Open patient conversation" }).click();
+  if (practitioner) await page.getByLabel("Select authorized patient").selectOption(patient);
   await expect(page.getByRole("region", { name: "Verified Records", exact: true })).toBeVisible();
 }
 
@@ -97,7 +103,7 @@ test("network failure has no automatic retry and explicit retry has a new operat
 });
 
 for (const change of ["sign out", "patient switch"]) test(`late result suppressed after ${change}`, async ({ page }) => {
-  await setup(page);
+  await setup(page, change === "patient switch");
   let release!: () => void;
   let entered!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -112,8 +118,7 @@ for (const change of ["sign out", "patient switch"]) test(`late result suppresse
   expect(calls).toBe(1);
   await page.getByRole("button", { name: change === "sign out" ? "Sign out" : "Change patient context", exact: true }).click();
   if (change === "patient switch") {
-    await page.getByLabel("Patient profile UUID").fill(other);
-    await page.getByRole("button", { name: "Open patient conversation" }).click();
+    await page.getByLabel("Select authorized patient").selectOption(other);
   }
   release();
   await expect(page.getByText("STALE PRIVATE RELEASE", { exact: true })).toHaveCount(0);

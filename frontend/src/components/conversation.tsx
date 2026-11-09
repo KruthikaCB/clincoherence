@@ -1,21 +1,13 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import FactCard, { FactDetails } from "./fact-card";
 import { Account, AcceptedFact, attribution, Proposal } from "./clinical-types";
 import VerifiedRecords from "./verified-records";
+import PatientSelector, { ApiError, exact, request, uuid } from "./patient-selector";
+import InvitationPanel from "./invitation-panel";
+import ConsentPanel from "./consent-panel";
 
-class ApiError extends Error { constructor(public status: number) { super("Request failed"); } }
-async function request<T>(path: string, token?: string, body?: object): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store", credentials: "omit", redirect: "error", referrerPolicy: "no-referrer",
-  });
-  if (!response.ok) throw new ApiError(response.status);
-  return response.json();
-}
 function message(error: unknown): string {
   const status = error instanceof ApiError ? error.status : 0;
   if (status === 401) return "Session unavailable. Sign in again.";
@@ -25,10 +17,12 @@ function message(error: unknown): string {
   return "Request could not be completed. Refresh server state before retrying; a decision may already have saved.";
 }
 type Turn = { id: string; text?: string };
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type Profile = { role: Account["role"]; profile_id: string };
 
 export default function Conversation() {
   const [session, setSession] = useState<{ token: string; account: Account } | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [contextVersion, setContextVersion] = useState(0);
   const [patient, setPatient] = useState("");
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [accepted, setAccepted] = useState<AcceptedFact[]>([]);
@@ -40,27 +34,28 @@ export default function Conversation() {
   // Synchronous guard prevents double clicks before React renders disabled controls.
   const working = useRef(false);
   const epoch = useRef(0);
+  const context = useRef(new AbortController());
   const draft = useRef<{ id: string; text: string } | null>(null);
-  function clearRecord() { setProposals([]); setAccepted([]); setTurns([]); setText(""); draft.current = null; }
-  function resetContext() { epoch.current++; working.current = false; setBusy(false); setPatient(""); clearRecord(); setError(""); setNotice(""); }
-  function fail(cause: unknown) {
-    setError(message(cause));
-    clearRecord();
-    if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
-      setPatient("");
-      if (cause.status === 401) setSession(null);
-    }
-  }
+  const clearRecord = useCallback(() => { setProposals([]); setAccepted([]); setTurns([]); setText(""); draft.current = null; }, []);
+  const cancelRequests = useCallback(() => { epoch.current++; context.current.abort(); context.current = new AbortController(); }, []);
+  useEffect(() => cancelRequests, [cancelRequests]);
+  const clearClinical = useCallback(() => { cancelRequests(); working.current = false; setBusy(false); clearRecord(); setContextVersion(value => value + 1); }, [cancelRequests, clearRecord]);
+  const resetContext = useCallback(() => { clearClinical(); setPatient(""); setError(""); setNotice(""); }, [clearClinical]);
+  const fail = useCallback((cause: unknown) => {
+    clearClinical(); setPatient(""); setError(message(cause)); setNotice("");
+    if (cause instanceof ApiError && cause.status === 401) { setSession(null); setProfile(null); }
+  }, [clearClinical]);
+  const onDenied = useCallback((status: number) => fail(new ApiError(status)), [fail]);
   function start() { if (working.current) return false; working.current = true; setBusy(true); setError(""); setNotice(""); return true; }
   function finish(ticket: number) { if (ticket === epoch.current) { working.current = false; setBusy(false); } }
-  async function load(id: string, active: NonNullable<typeof session>, ticket: number) {
+  const load = useCallback(async (id: string, active: NonNullable<typeof session>, ticket: number, signal: AbortSignal) => {
     // Show neither half of the snapshot if either protected read fails.
     const [items, facts] = await Promise.all([
-      request<Proposal[]>(`/patients/${id}/confirmations`, active.token),
-      request<AcceptedFact[]>(`/patients/${id}/facts`, active.token),
+      request<Proposal[]>(`/patients/${id}/confirmations`, active.token, undefined, signal),
+      request<AcceptedFact[]>(`/patients/${id}/facts`, active.token, undefined, signal),
     ]);
-    if (ticket !== epoch.current) return;
-    if (items.some(p => p.patient_id !== id || p.speaker_id !== active.account.id || p.speaker_role !== active.account.role) || facts.some(f => f.patient_id !== id || f.status !== "CONFIRMED")) {
+    if (ticket !== epoch.current || signal.aborted) return;
+    if (!Array.isArray(items) || !Array.isArray(facts) || items.some(p => p.patient_id !== id || p.speaker_id !== active.account.id || p.speaker_role !== active.account.role) || facts.some(f => f.patient_id !== id || f.status !== "CONFIRMED")) {
       throw new ApiError(403);
     }
     setProposals(items); setAccepted(facts);
@@ -69,7 +64,7 @@ export default function Conversation() {
       for (const item of items) if (!merged.some(turn => turn.id === item.source_message_id)) merged.push({ id: item.source_message_id });
       return merged;
     });
-  }
+  }, []);
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!start()) return;
     const ticket = epoch.current;
@@ -79,28 +74,44 @@ export default function Conversation() {
     const password = String(fields.get("password"));
     form.reset();
     try {
-      const { access_token } = await request<{ access_token: string }>("/auth/login", undefined, { identity, password });
-      const account = await request<Account>("/auth/me", access_token);
-      if (ticket === epoch.current) setSession({ token: access_token, account });
+      const signal = context.current.signal;
+      const auth = exact(await request<unknown>("/auth/login", undefined, { identity, password }, signal), "access_token,token_type");
+      if (typeof auth.access_token !== "string" || !auth.access_token || auth.token_type !== "bearer") throw new ApiError(401);
+      const me = exact(await request<unknown>("/auth/me", auth.access_token, undefined, signal), "id,role");
+      if (typeof me.id !== "string" || !uuid.test(me.id) || (me.role !== "patient" && me.role !== "practitioner")) throw new ApiError(401);
+      const active = { token: auth.access_token, account: { id: me.id, role: me.role } as Account };
+      if (ticket !== epoch.current) return;
+      setSession(active);
+      const own = exact(await request<unknown>("/auth/profile", active.token, undefined, signal), "profile_id,role");
+      if (own.role !== active.account.role || typeof own.profile_id !== "string" || !uuid.test(own.profile_id)) throw new ApiError(403);
+      if (ticket !== epoch.current) return;
+      setProfile({ profile_id: own.profile_id, role: active.account.role });
+      if (active.account.role === "patient") {
+        await load(own.profile_id, active, ticket, signal);
+        if (ticket === epoch.current) setPatient(own.profile_id);
+      }
     } catch (cause) { if (ticket === epoch.current) fail(cause); }
     finally { finish(ticket); }
   }
-  async function open(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!session || !start()) return;
-    const id = String(new FormData(event.currentTarget).get("patient")).trim().toLowerCase();
-    const ticket = ++epoch.current; clearRecord(); setPatient("");
-    try {
-      if (!uuid.test(id)) { setError("Enter a valid patient profile UUID."); return; }
-      await load(id, session, ticket);
-      if (ticket === epoch.current) setPatient(id);
-    } catch (cause) { if (ticket === epoch.current) fail(cause); }
-    finally { finish(ticket); }
-  }
+  const selectPatient = useCallback((id: string) => {
+    if (!session || !profile) return;
+    resetContext();
+    if (!id) return;
+    if (!uuid.test(id) || (session.account.role === "patient" && id !== profile.profile_id)) { fail(new ApiError(403)); return; }
+    const ticket = epoch.current;
+    const signal = context.current.signal;
+    working.current = true; setBusy(true);
+    void (async () => {
+      try { await load(id, session, ticket, signal); if (ticket === epoch.current) setPatient(id); }
+      catch (cause) { if (ticket === epoch.current) fail(cause); }
+      finally { if (ticket === epoch.current) { working.current = false; setBusy(false); } }
+    })();
+  }, [session, profile, resetContext, fail, load]);
   async function refresh() {
     if (!session || !patient || !start()) return;
     const ticket = epoch.current;
     setProposals([]); setAccepted([]);
-    try { await load(patient, session, ticket); }
+    try { await load(patient, session, ticket, context.current.signal); }
     catch (cause) { if (ticket === epoch.current) fail(cause); }
     finally { finish(ticket); }
   }
@@ -111,16 +122,17 @@ export default function Conversation() {
     if (!draft.current || draft.current.text !== text) draft.current = { id: crypto.randomUUID(), text };
     const turn = draft.current;
     try {
-      const result = await request<{ confirmations: Proposal[] }>(`/patients/${patient}/extractions`, session.token, { source_message_id: turn.id, text: turn.text, data_origin: "synthetic" });
+      const signal = context.current.signal;
+      const result = await request<{ confirmations: Proposal[] }>(`/patients/${patient}/extractions`, session.token, { source_message_id: turn.id, text: turn.text, data_origin: "synthetic" }, signal);
       if (ticket !== epoch.current) return;
       setTurns(previous => [...previous.filter(t => t.id !== turn.id), turn]);
       setText(""); draft.current = null;
-      await load(patient, session, ticket);
+      await load(patient, session, ticket, signal);
       if (ticket === epoch.current && result.confirmations.length === 0) setNotice("No supported facts extracted. Nothing was added to accepted state.");
     } catch (cause) {
       if (ticket !== epoch.current) return;
       if (cause instanceof ApiError && cause.status === 409) {
-        try { await load(patient, session, ticket); if (ticket === epoch.current) { setText(""); draft.current = null; setNotice(message(cause)); } }
+        try { await load(patient, session, ticket, context.current.signal); if (ticket === epoch.current) { setText(""); draft.current = null; setNotice(message(cause)); } }
         catch (reloadError) { if (ticket === epoch.current) fail(reloadError); }
       } else if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) fail(cause);
       else setError(message(cause));
@@ -130,14 +142,15 @@ export default function Conversation() {
     if (!session || !patient || !start()) return;
     const ticket = epoch.current;
     try {
-      await request(`/patients/${patient}/confirmations/${id}/${action}`, session.token, {});
+      const signal = context.current.signal;
+      await request(`/patients/${patient}/confirmations/${id}/${action}`, session.token, {}, signal);
       if (ticket !== epoch.current) return;
-      await load(patient, session, ticket);
+      await load(patient, session, ticket, signal);
       if (ticket === epoch.current) setNotice("Decision saved. Display refreshed from server state.");
     } catch (cause) {
       if (ticket !== epoch.current) return;
       if (cause instanceof ApiError && cause.status === 409) {
-        try { await load(patient, session, ticket); if (ticket === epoch.current) setNotice(message(cause)); }
+        try { await load(patient, session, ticket, context.current.signal); if (ticket === epoch.current) setNotice(message(cause)); }
         catch (reloadError) { if (ticket === epoch.current) fail(reloadError); }
       } else fail(cause);
     } finally { finish(ticket); }
@@ -154,18 +167,23 @@ export default function Conversation() {
         <button disabled={busy}>{busy ? "Signing in..." : "Sign in"}</button>
       </form></section> : <>
       <section className="panel"><div className="actions"><h2>{session.account.role === "patient" ? "Patient" : "Practitioner"} mode</h2>
-        <button className="secondary" onClick={() => { resetContext(); setSession(null); }}>Sign out</button></div>
-        <p>Tokens and text stay in memory and are cleared on sign out, context change, or page reload.</p>
-        {!patient ? <form onSubmit={open} aria-busy={busy}>
-          <label>Patient profile UUID<input name="patient" required autoComplete="off" /></label>
-          <p>{session.account.role === "patient" ? "Enter your own patient profile UUID (not your account ID)." : "Enter a synthetic patient's profile UUID. Current authorization and consent are required."}</p>
-          <button disabled={busy}>{busy ? "Loading..." : "Open patient conversation"}</button>
-        </form> : <><p>Patient context: {patient}</p><div className="actions">
-          <button className="secondary" onClick={resetContext}>Change patient context</button>
+        <button className="secondary" onClick={() => { resetContext(); setSession(null); setProfile(null); }}>Sign out</button></div>
+        <p>Tokens stay in memory until sign out or reload. Patient-specific content and invitation secrets are cleared on context changes.</p>
+        {profile ? <p className="break-all">Your {profile.role} profile: {profile.profile_id}</p> : <p>Profile discovery unavailable or loading. Sign out and sign in again if discovery fails.</p>}
+        {busy && <p role="status">Loading patient workspace...</p>}
+        {profile?.role === "patient" && !patient && !busy && <button onClick={() => selectPatient(profile.profile_id)}>Open my record</button>}
+        {patient && <><p className="break-all">Patient context: {patient}</p><div className="actions">
+          {session.account.role === "practitioner" && <button className="secondary" onClick={resetContext}>Change patient context</button>}
           <button onClick={refresh} disabled={busy}>Refresh server state</button>
         </div></>}
       </section>
-      {patient && !busy && <VerifiedRecords token={session.token} patient={patient} facts={accepted} onDenied={status => fail(new ApiError(status))} />}
+      {profile && <div className="conversation-layout">
+        {profile.role === "practitioner" ? <>
+          <PatientSelector token={session.token} value={patient} onSelect={selectPatient} onDenied={onDenied} />
+          <InvitationPanel key={contextVersion} token={session.token} onDenied={onDenied} />
+        </> : <ConsentPanel token={session.token} onDenied={onDenied} onMutation={clearClinical} />}
+      </div>}
+      {patient && !busy && <VerifiedRecords key={`${contextVersion}:${patient}`} token={session.token} patient={patient} facts={accepted} onDenied={onDenied} />}
       {patient && <div className="conversation-layout">
         <section className="panel" aria-label="Your conversation"><h2>Your conversation</h2>
           <p>Only your own source messages and proposals are shown. Shared record consent does not share transcripts.</p>
