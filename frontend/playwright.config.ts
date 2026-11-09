@@ -4,6 +4,8 @@ import { defineConfig, devices } from "@playwright/test";
  * Playwright configuration for ClinCoherence frontend end-to-end tests.
  * See https://playwright.dev/docs/test-configuration
  */
+const baseURL = process.env.FRONTEND_URL || "http://localhost:3000";
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
@@ -12,8 +14,8 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   use: {
-    baseURL: process.env.FRONTEND_URL || "http://localhost:3000",
-    trace: "on-first-retry",
+    baseURL,
+    trace: "off",
   },
   projects: [
     {
@@ -22,8 +24,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
-    url: "http://localhost:3000",
+    command: `npm run dev -- --port ${new URL(baseURL).port || "3000"}`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
   },

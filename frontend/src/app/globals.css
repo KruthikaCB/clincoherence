@@ -25,3 +25,22 @@ body {
     text-wrap: balance;
   }
 }
+
+/* Research conversation workspace, reusing the scaffold's slate palette. */
+.workspace { max-width: 1200px; margin: auto; padding: 2rem 1rem; color: #0f172a; }
+body { background: #f8fafc; color: #0f172a; }
+h1 { font-size: 2rem; font-weight: 700; } h2 { font-size: 1.3rem; font-weight: 600; } h3 { font-weight: 600; }
+p { margin: .6rem 0; } .panel { padding: 1.25rem; background: white; border: 1px solid #cbd5e1; border-radius: .75rem; margin-top: 1rem; min-width: 0; }
+.conversation-layout { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1rem; align-items: start; }
+label { display: grid; gap: .3rem; margin: .8rem 0; font-weight: 600; }
+input, textarea { width: 100%; padding: .6rem; border: 1px solid #64748b; border-radius: .3rem; background: white; color: #0f172a; }
+button { background: #115e59; color: white; padding: .55rem .9rem; border-radius: .3rem; font-weight: 600; }
+button.secondary { background: #e2e8f0; color: #0f172a; } button:disabled { opacity: .6; cursor: wait; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+.actions, .card-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; } .card-heading { justify-content: space-between; }
+.fact-card { border: 1px solid #94a3b8; padding: 1rem; border-radius: .5rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.fact-details div { display: flex; flex-wrap: wrap; gap: .5rem; margin: .3rem 0; } dt { font-weight: 600; }
+blockquote, .source-text { white-space: pre-wrap; overflow-wrap: anywhere; background: #f1f5f9; padding: .75rem; margin: .5rem 0; }
+.turn { border-top: 1px solid #cbd5e1; margin-top: 1rem; padding-top: 1rem; }
+.error { color: #991b1b; background: #fef2f2; padding: .8rem; }
+@media (max-width: 800px) { .conversation-layout { grid-template-columns: 1fr; } }
