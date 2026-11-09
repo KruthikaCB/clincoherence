@@ -40,16 +40,10 @@ def version_input(row: ClinicalFactVersion) -> FactVersion:
     )
 
 
-async def check_patient_consistency(
+async def load_accepted_state(
     db: AsyncSession, account_id: UUID, patient_id: UUID
-) -> ConsistencyRun:
-    """No commit, insert or audit write. Locks remain held on success.
-
-    As with accepted_facts, caller must retain the transaction through protected
-    consumption/ASGI handoff, using the existing release gate for any future API.
-    Committing then releasing this result without fresh authorization is unsafe.
-    This service does not provide a public endpoint or permission cache.
-    """
+) -> tuple[list[FactVersion], list[FactVersion]]:
+    """Shared internal loader; caller retains transaction/locks through consumption."""
     if db.new or db.dirty or db.deleted:
         raise HTTPException(409, "Consistency evaluation requires a clean session")
     with db.no_autoflush:
@@ -64,12 +58,25 @@ async def check_patient_consistency(
         )
         current = list(await db.scalars(current_query(patient_id)))
         try:
-            evaluation = evaluate_consistency(
-                patient_id, [version_input(r) for r in current], [version_input(r) for r in history]
-            )
-        except (ValidationError, ConsistencyInputError):
+            return [version_input(r) for r in current], [version_input(r) for r in history]
+        except ValidationError:
             raise HTTPException(
                 409, "Accepted state unavailable for consistency evaluation"
             ) from None
-        await authorize_patient_scope(db, account_id, patient_id)
-        return ConsistencyRun(evaluated_at=datetime.now(UTC), evaluation=evaluation)
+
+
+async def check_patient_consistency(
+    db: AsyncSession, account_id: UUID, patient_id: UUID
+) -> ConsistencyRun:
+    """Read only; caller owns transaction cleanup and protected release.
+
+    Locks remain held on success. Future APIs must use the existing release gate,
+    never release a result after dropping the gate without fresh authorization.
+    """
+    current, history = await load_accepted_state(db, account_id, patient_id)
+    try:
+        evaluation = evaluate_consistency(patient_id, current, history)
+    except ConsistencyInputError:
+        raise HTTPException(409, "Accepted state unavailable for consistency evaluation") from None
+    await authorize_patient_scope(db, account_id, patient_id)
+    return ConsistencyRun(evaluated_at=datetime.now(UTC), evaluation=evaluation)
