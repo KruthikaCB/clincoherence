@@ -71,6 +71,7 @@ class PatientProfile(Base):
     __tablename__ = "patient_profiles"
     __table_args__ = (
         UniqueConstraint("id", "is_active", name="uq_patient_id_active"),
+        UniqueConstraint("id", "initiated_by_id", name="uq_patient_id_initiator"),
         CheckConstraint("account_role = 'patient'", name="ck_patient_account_role"),
         ForeignKeyConstraint(
             ["account_id", "account_role"],

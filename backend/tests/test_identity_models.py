@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import MetaData, Table, func, select
+from sqlalchemy import MetaData, Table, UniqueConstraint, func, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import configure_mappers
@@ -18,7 +18,7 @@ from sqlalchemy.schema import CreateTable
 from app.core.database import Base
 from app.models import PatientPractitionerConsent as Consent
 from app.models import PatientProfile, PractitionerProfile, User
-from tests.database import migration
+from tests.database import migrations
 
 
 def test_migration_matches_model_schema(monkeypatch):
@@ -31,9 +31,13 @@ def test_migration_matches_model_schema(monkeypatch):
         def create_table(name, *items):
             Table(name, metadata, *items)
 
-    revision = migration()
-    monkeypatch.setattr(revision, "op", Recorder)
-    revision.upgrade()
+        @staticmethod
+        def create_unique_constraint(name, table, columns):
+            metadata.tables[table].append_constraint(UniqueConstraint(*columns, name=name))
+
+    for revision in migrations():
+        monkeypatch.setattr(revision, "op", Recorder)
+        revision.upgrade()
     assert set(metadata.tables) == set(Base.metadata.tables)
     dialect = postgresql.dialect()
     for name, table in metadata.tables.items():

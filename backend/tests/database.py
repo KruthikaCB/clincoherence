@@ -13,12 +13,16 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 
-def migration():
-    path = Path(__file__).resolve().parents[1] / "alembic/versions/0001_foundational_identity.py"
+def migration(name="0001_foundational_identity"):
+    path = Path(__file__).resolve().parents[1] / f"alembic/versions/{name}.py"
     spec = importlib.util.spec_from_file_location("initial_migration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def migrations():
+    return [migration("0001_foundational_identity"), migration("0002_patient_invitations")]
 
 
 @pytest.fixture
@@ -43,7 +47,8 @@ async def db():
             def upgrade(sync_connection):
                 context = MigrationContext.configure(sync_connection)
                 with Operations.context(context):
-                    migration().upgrade()
+                    for revision in migrations():
+                        revision.upgrade()
 
             await connection.run_sync(upgrade)
             await connection.commit()

@@ -6,5 +6,12 @@ from app.models.identity import (
     PractitionerProfile,
     User,
 )
+from app.models.invitation import PatientInvitation
 
-__all__ = ["PatientPractitionerConsent", "PatientProfile", "PractitionerProfile", "User"]
+__all__ = [
+    "PatientInvitation",
+    "PatientPractitionerConsent",
+    "PatientProfile",
+    "PractitionerProfile",
+    "User",
+]

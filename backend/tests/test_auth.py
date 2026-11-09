@@ -12,7 +12,6 @@ from jose import JWTError, jwt
 from sqlalchemy import update
 
 from app.core.config import settings
-from app.core.database import get_db
 from app.core.security import (
     create_access_token,
     decode_access_token,
@@ -161,18 +160,6 @@ async def test_invalid_signed_token_http(case):
             f"{PREFIX}/auth/me", headers={"Authorization": f"Bearer {token}"}
         )
     assert response.status_code == 401
-
-
-@pytest.fixture
-async def api(db):
-    app = create_app()
-
-    async def test_db():
-        yield db
-
-    app.dependency_overrides[get_db] = test_db
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client
 
 
 async def add_patient(db, *, verified=True, active=True, profile=True):

@@ -5,7 +5,9 @@ Loads configuration from environment variables and .env files.
 """
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +38,32 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+
+    # Controlled synthetic-user onboarding only; no production identity assurance.
+    INVITATION_URL_ORIGIN: str = "http://localhost:3000"
+    INVITATION_EXPIRE_MINUTES: int = Field(default=1440, ge=1, le=10080)
+
+    @field_validator("INVITATION_URL_ORIGIN")
+    @classmethod
+    def invitation_origin(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        # Accessing port also rejects malformed/out-of-range port values.
+        _ = parsed.port
+        if (
+            any(ord(character) <= 32 for character in value)
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or (
+                parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+            )
+        ):
+            raise ValueError("Use an HTTPS origin, or HTTP loopback origin for local research")
+        return value.rstrip("/")
 
     # --- CORS ---
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
