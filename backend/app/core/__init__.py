@@ -1,0 +1,2 @@
+"""ClinCoherence core configuration package."""
+
