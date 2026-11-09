@@ -10,8 +10,10 @@ from app.models.identity import (
     User,
 )
 from app.models.invitation import PatientInvitation
+from app.models.verification_audit import VerificationAuditEvent
 
 __all__ = [
+    "VerificationAuditEvent",
     "ConfirmationDecision",
     "ConfirmationProposal",
     "ExtractionMessage",

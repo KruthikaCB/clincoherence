@@ -28,6 +28,7 @@ def migrations():
         migration("0003_consent_history"),
         migration("0004_clinical_facts"),
         migration("0005_supervised_extraction"),
+        migration("0006_verification_audit"),
     ]
 
 
@@ -36,17 +37,24 @@ async def db():
     value = os.environ.get("TEST_DATABASE_URL")
     if not value:
         pytest.skip(
-            "PostgreSQL integration requires explicit TEST_DATABASE_URL (database ending _test)"
+            "PostgreSQL integration requires explicit TEST_DATABASE_URL for clincoherence_db_test"
         )
     url = make_url(value)
-    if url.drivername != "postgresql+asyncpg" or not (url.database or "").endswith("_test"):
+    if url.drivername != "postgresql+asyncpg" or url.database != "clincoherence_db_test":
         pytest.fail(
-            "Refusing integration target: require postgresql+asyncpg and database ending _test"
+            "Refusing integration target: require postgresql+asyncpg and clincoherence_db_test"
         )
     engine = create_async_engine(url, connect_args={"timeout": 5}, hide_parameters=True)
     schema = "cc_test_" + uuid4().hex
     try:
         async with engine.connect() as connection:
+            if (
+                await connection.scalar(text("SELECT current_database()"))
+                != "clincoherence_db_test"
+            ):
+                pytest.fail(
+                    "Refusing integration target: server database is not clincoherence_db_test"
+                )
             await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
             await connection.execute(text(f'SET search_path TO "{schema}"'))
 
