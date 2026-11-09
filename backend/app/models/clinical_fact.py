@@ -25,6 +25,15 @@ class ClinicalFactVersion(Base):
         UniqueConstraint("fact_id", "version", name="uq_clinical_fact_version"),
         UniqueConstraint(
             "id",
+            "patient_id",
+            "author_id",
+            "author_role",
+            "entry_method",
+            "confirmed_by_id",
+            name="uq_clinical_extracted_confirmation",
+        ),
+        UniqueConstraint(
+            "id",
             "fact_id",
             "patient_id",
             "attribution",

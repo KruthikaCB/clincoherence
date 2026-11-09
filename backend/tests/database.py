@@ -27,6 +27,7 @@ def migrations():
         migration("0002_patient_invitations"),
         migration("0003_consent_history"),
         migration("0004_clinical_facts"),
+        migration("0005_supervised_extraction"),
     ]
 
 
