@@ -4,6 +4,8 @@ Application configuration using Pydantic Settings.
 Loads configuration from environment variables and .env files.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,7 +13,11 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Root template is documented; backend-local values may override it.
+        env_file=(
+            Path(__file__).resolve().parents[3] / ".env",
+            Path(__file__).resolve().parents[2] / ".env",
+        ),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -22,7 +28,9 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # --- Database ---
-    DATABASE_URL: str = "postgresql+asyncpg://clincoherence_user:changeme@localhost:5432/clincoherence_db"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://clincoherence_user:changeme@localhost:5432/clincoherence_db"
+    )
 
     # --- Authentication ---
     SECRET_KEY: str = "dev-secret-key-change-in-production"
@@ -40,4 +48,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

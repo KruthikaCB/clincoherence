@@ -8,22 +8,20 @@ async database engine and SQLAlchemy model metadata.
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
+from app import models  # noqa: F401 -- register model metadata
 from app.core.config import settings
 from app.core.database import Base
-
-# Import all models here so that Base.metadata is populated
-# from app.models import user, patient, conversation  # noqa: F401 (uncomment as models are added)
 
 # Alembic Config object
 config = context.config
 
 # Override sqlalchemy.url with the application setting
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Set up Python logging from alembic.ini
 if config.config_file_name is not None:
@@ -81,4 +79,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-
