@@ -13,7 +13,7 @@ function formatDate(iso: string): string {
 
 function VersionDetails({ version, current }: { version: AcceptedFact; current: boolean }) {
   return (
-    <div className="cc-history-version">
+    <div className="cc-history-version" role="article" aria-label="Clinical fact version">
       <div className="cc-history-version-head">
         <div>
           <span style={{ fontWeight: 600, fontSize: "0.82rem" }}>Version {version.version}</span>
@@ -37,6 +37,8 @@ function VersionDetails({ version, current }: { version: AcceptedFact; current: 
           <summary>Technical details</summary>
           <div className="cc-advanced-body">
             <dl>
+              <dt>Observation timestamp</dt><dd>{version.observed_at}</dd>
+              <dt>Entry timestamp</dt><dd>{version.entered_at}</dd>
               <dt>Patient ID</dt><dd>{version.patient_id}</dd>
               <dt>Fact root ID</dt><dd>{version.fact_id}</dd>
               <dt>Version ID</dt><dd>{version.version_id}</dd>
@@ -109,7 +111,7 @@ export default function ClinicalHistory({ token, patient, role, facts, contextSi
   }, [autoRoot, facts]);
 
   return (
-    <div style={{ padding: "1rem" }} aria-label="Clinical History">
+    <div style={{ padding: "1rem" }} role="region" aria-label="Clinical History">
       <div style={{ marginBottom: "0.75rem" }}>
         <div style={{ fontSize: "0.75rem", color: "#6b7280", lineHeight: 1.5 }}>
           Current accepted shared records. Acceptance is not medical correctness.
@@ -124,7 +126,7 @@ export default function ClinicalHistory({ token, patient, role, facts, contextSi
       )}
 
       {facts.map(fact => (
-        <div key={fact.version_id} className="cc-card" style={{ marginBottom: "0.65rem" }}>
+        <div key={fact.version_id} role="article" aria-label="Accepted fact" className="cc-card" style={{ marginBottom: "0.65rem" }}>
           <div className="cc-card-head">
             <div>
               <div style={{ fontSize: "0.65rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#6b7280", marginBottom: "0.15rem" }}>
@@ -166,7 +168,7 @@ export default function ClinicalHistory({ token, patient, role, facts, contextSi
           <span className="cc-spinner" /> Loading history…
         </div>
       )}
-      {error && <div className="cc-banner error" role="alert">{error}</div>}
+      {error && <div className="cc-banner error" role="alert" aria-label="Clinical history error">{error}</div>}
 
       {editing && expanded?.snapshot === facts && (
         <div style={{ marginTop: "0.75rem" }}>
@@ -180,7 +182,7 @@ export default function ClinicalHistory({ token, patient, role, facts, contextSi
       )}
 
       {expanded?.snapshot === facts && (
-        <div style={{ marginTop: "0.75rem" }} aria-label="Accepted correction history" aria-live="polite">
+        <div style={{ marginTop: "0.75rem" }} role="region" aria-label="Accepted correction history" aria-live="polite">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.65rem" }}>
             <h3 style={{ margin: 0, fontSize: "0.82rem" }}>Correction history</h3>
             <button className="cc-btn cc-btn-ghost cc-btn-xs" disabled={busy} onClick={() => setExpanded(null)}>Close</button>

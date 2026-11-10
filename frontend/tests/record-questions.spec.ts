@@ -1,10 +1,11 @@
+import { selectPatient } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 
 const patient = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
 const claim = "33333333-3333-4333-8333-333333333333";
-const panel = (page: Page) => page.getByRole("region", { name: "Record questions", exact: true });
-const record = (page: Page) => page.getByRole("article", { name: "Released question record", exact: true });
+const panel = (page: Page) => page.locator(".cc-input-area");
+const record = (page: Page) => page.locator(".cc-msg-assistant.result");
 const output = { representation_version: "record-response-json-v1", records: [{ claim_id: claim, text: "Synthetic server-only restatement" }] };
 
 async function setup(page: Page, role = "patient") {
@@ -20,13 +21,14 @@ async function setup(page: Page, role = "patient") {
   await page.getByLabel("Account identity").fill("question@synthetic.invalid");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-question-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  if (role === "practitioner") await page.getByLabel("Select authorized patient").selectOption(patient);
+  if (role === "practitioner") await selectPatient(page, patient);
+  await page.getByRole("button", { name: "Ask Patient Records", exact: true }).click();
   await expect(panel(page)).toBeVisible();
 }
 
 async function ask(page: Page) {
   await panel(page).getByLabel("Record question", { exact: true }).fill("What confirmed clinical information is recorded?");
-  await panel(page).getByRole("button", { name: "Ask records", exact: true }).click();
+  await panel(page).getByRole("button", { name: "Ask", exact: true }).click();
 }
 
 for (const role of ["patient", "practitioner"]) test(`${role} renders only released text and uses fresh operation IDs`, async ({ page }) => {
@@ -34,7 +36,8 @@ for (const role of ["patient", "practitioner"]) test(`${role} renders only relea
   const operations: string[] = [];
   await page.route("**/record-questions", route => {
     const body = route.request().postDataJSON();
-    expect(Object.keys(body).sort()).toEqual(["operation_id", "question"]);
+    expect(Object.keys(body).sort()).toEqual(operations.length ? ["operation_id", "previous_questions", "question"] : ["operation_id", "question"]);
+    if (operations.length) expect(body.previous_questions).toEqual(["What confirmed clinical information is recorded?"]);
     expect(body.question).toBe("What confirmed clinical information is recorded?");
     expect(body.operation_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(route.request().headers().authorization).toBe("Bearer synthetic-question-token");
@@ -44,7 +47,7 @@ for (const role of ["patient", "practitioner"]) test(`${role} renders only relea
   await ask(page);
   await expect(record(page)).toContainText("Synthetic server-only restatement");
   await ask(page);
-  await expect(record(page)).toHaveCount(1);
+  await expect(record(page)).toHaveCount(2);
   expect(operations.length === 2 && operations[0] !== operations[1]).toBe(true);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie])).toEqual([0, 0, ""]);
 });
@@ -56,7 +59,7 @@ for (const reason of ["QUESTION_UNSUPPORTED", "NO_MATCHING_RECORDS", "LATEST_AMB
     status: reason === "CLINICAL_DECISION_UNSUPPORTED" ? "REFUSE" : "CLARIFY",
   } }));
   await ask(page);
-  await expect(panel(page).getByRole("status")).toBeVisible();
+  await expect(page.locator(".cc-msg-assistant.notice")).toBeVisible();
   await expect(record(page)).toHaveCount(0);
 });
 
@@ -65,7 +68,7 @@ for (const status of [401, 403, 409, 422, 503]) test(`failure ${status} withhold
   let posts = 0;
   await page.route("**/record-questions", route => { posts++; return route.fulfill({ status, json: output }); });
   await ask(page);
-  await expect(page.getByRole("alert", { name: status === 401 || status === 403 ? "Request error" : "Record question error", exact: true })).toBeVisible();
+  await expect(status === 401 || status === 403 ? page.getByRole("alert", { name: "Request error", exact: true }) : page.locator(".cc-msg-assistant.error")).toBeVisible();
   await expect(record(page)).toHaveCount(0);
   await expect(page.getByText("Synthetic server-only restatement", { exact: true })).toHaveCount(0);
   expect(posts).toBe(1);
@@ -75,7 +78,7 @@ test("unknown or forged release representation is not rendered", async ({ page }
   await setup(page);
   await page.route("**/record-questions", route => route.fulfill({ json: { ...output, PASS: true, draft: "PRIVATE DRAFT" } }));
   await ask(page);
-  await expect(panel(page).getByRole("alert")).toBeVisible();
+  await expect(page.locator(".cc-msg-assistant.error")).toBeVisible();
   await expect(record(page)).toHaveCount(0);
   await expect(page.getByText("PRIVATE DRAFT", { exact: true })).toHaveCount(0);
 });
@@ -88,7 +91,7 @@ test("lost acknowledgement never retries and a new explicit request has a fresh 
     return operations.length === 1 ? route.abort("failed") : route.fulfill({ json: output });
   });
   await ask(page);
-  await expect(panel(page).getByRole("alert")).toBeVisible();
+  await expect(page.locator(".cc-msg-assistant.error")).toBeVisible();
   await expect(record(page)).toHaveCount(0);
   expect(operations).toHaveLength(1);
   await ask(page);
@@ -120,9 +123,9 @@ for (const action of ["duplicate", "switch", "sign-out", "refresh"]) test(`pendi
   });
   try {
     await panel(page).getByLabel("Record question", { exact: true }).fill("What medications are currently recorded?");
-    await panel(page).getByRole("button", { name: "Ask records", exact: true }).evaluate(b => { (b as HTMLButtonElement).click(); (b as HTMLButtonElement).click(); });
+    await panel(page).getByRole("button", { name: "Ask", exact: true }).evaluate(b => { (b as HTMLButtonElement).click(); (b as HTMLButtonElement).click(); });
     await started;
-    if (action === "switch") await page.getByLabel("Select authorized patient").selectOption(other);
+    if (action === "switch") await selectPatient(page, other);
     if (action === "sign-out") await page.getByRole("button", { name: "Sign out", exact: true }).click();
     if (action === "refresh") await page.getByRole("button", { name: "Refresh server state", exact: true }).click();
     release(); await completed;

@@ -1,3 +1,4 @@
+import { accepted, selectPatient, history, verified, selected } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 import type { AcceptedFact, Fact } from "../src/components/clinical-types";
 
@@ -26,9 +27,8 @@ const base = root();
 const second = correction(base, 2, 3);
 const current = correction(second, 3, 5);
 const chain = [base, second, current];
-const accepted = (page: Page) => page.getByRole("article", { name: "Accepted fact", exact: true });
 const versions = (page: Page) => page.getByRole("article", { name: "Clinical fact version", exact: true });
-const openHistory = (page: Page) => page.getByRole("button", { name: "View details/history", exact: true }).first().click();
+const openHistory = async (page: Page) => { await history(page); await page.getByRole("button", { name: "View history", exact: true }).first().click(); };
 
 async function setup(page: Page, options: { facts?: unknown; history?: unknown; role?: "patient" | "practitioner" } = {}) {
   const role = options.role ?? "patient";
@@ -58,7 +58,7 @@ async function setup(page: Page, options: { facts?: unknown; history?: unknown; 
   await page.getByLabel("Account identity").fill("history@synthetic.invalid");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-history-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  if (role === "practitioner") await page.getByLabel("Select authorized patient").selectOption(patient);
+  if (role === "practitioner") await selectPatient(page, patient);
   return state;
 }
 
@@ -72,12 +72,15 @@ test("all T2DM payload types, exact decimals and separate accepted-record sectio
   ];
   const state = await setup(page, { facts });
   await expect(accepted(page)).toHaveCount(6);
+  await history(page);
   const panel = page.getByRole("region", { name: "Clinical History", exact: true });
-  for (const text of ["7.1000000000", "0.1000000000", "1E-10", "Recorded synthetic diagnosis", "Synthetic recorded medication", "Synthetic reported symptom", "Synthetic reported history"]) {
+  for (const text of ["7.1000000000", "0.1000000000 mg", "1E-10", "Recorded synthetic diagnosis", "Synthetic recorded medication", "Synthetic reported symptom", "Synthetic reported history"]) {
     await expect(panel.getByText(text, { exact: true })).toBeVisible();
   }
+  await verified(page);
   await expect(page.getByRole("region", { name: "Verified Records", exact: true })).toBeVisible();
   expect(state.requests.filter(r => r.path.endsWith("/history"))).toHaveLength(0);
+  await history(page);
   await expect(panel.getByRole("button", { name: /submit new version|save|delete/i })).toHaveCount(0);
 });
 
@@ -87,8 +90,8 @@ for (const role of ["patient", "practitioner"] as const) test(`${role} full prov
   await expect(accepted(page)).toHaveCount(1);
   await openHistory(page);
   await expect(versions(page)).toHaveCount(3);
-  expect(await versions(page).getByRole("heading").allTextContents()).toEqual([
-    "Version 1 — Superseded", "Version 3 — Superseded", "Version 5 — Current accepted version",
+  expect(await versions(page).locator(".cc-history-version-head").allTextContents()).toEqual([
+    expect.stringMatching(/Version 1.*Superseded/), expect.stringMatching(/Version 3.*Superseded/), expect.stringMatching(/Version 5.*Current/),
   ]);
   await expect(versions(page).first()).toContainText(base.observed_at);
   await expect(versions(page).last()).toContainText(current.observed_at); // Retrospective, not reordered.
@@ -98,12 +101,12 @@ for (const role of ["patient", "practitioner"] as const) test(`${role} full prov
   }
   await expect(versions(page).first()).toContainText(base.provenance.reference!);
   await expect(versions(page).first()).toContainText(base.confirmed_at!);
-  await expect(versions(page).first()).toContainText("Confirmed by account ID");
-  await expect(versions(page).last()).toContainText("Accepted structured entry");
+  await expect(versions(page).first()).toContainText("Confirmed by");
+  await expect(versions(page).last()).toContainText("STRUCTURED");
   expect(state.requests.filter(r => r.path.endsWith("/history"))).toEqual([
     { method: "GET", path: `/api/v1/patients/${patient}/facts/${base.fact_id}/history` },
   ]);
-  await page.getByRole("button", { name: "Close details/history", exact: true }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(versions(page)).toHaveCount(0);
 });
 
@@ -119,8 +122,8 @@ test("provenance is escaped text, never an external or private-transcript fetch"
 
 test("empty state", async ({ page }) => {
   await setup(page, { facts: [] });
-  await expect(page.getByText("No accepted facts loaded.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "View details/history", exact: true })).toHaveCount(0);
+  await expect(page.getByText("No accepted records yet", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "View history", exact: true })).toHaveCount(0);
 });
 
 test("Unicode text uses backend code-point limits without truncation", async ({ page }) => {
@@ -191,7 +194,8 @@ for (const status of [401, 403, 404, 409, 422, 503]) test(`history response ${st
 
 test("newer history refreshes accepted state and clears old verified text without auto-opening history", async ({ page }) => {
   const state = await setup(page);
-  await page.getByRole("button", { name: "Request verified record", exact: true }).click();
+  await verified(page);
+  await page.getByRole("button", { name: "Request Verified Record", exact: true }).click();
   await expect(page.getByRole("article", { name: "Server-released record", exact: true })).toHaveCount(1);
   await page.route("**/history", route => {
     state.requests.push({ path: route.request().url(), method: "GET" });
@@ -200,7 +204,7 @@ test("newer history refreshes accepted state and clears old verified text withou
   });
   await openHistory(page);
   await expect(page.getByRole("status").filter({ hasText: "Clinical record changed" })).toBeVisible();
-  await expect(accepted(page)).toContainText("Current accepted version 5");
+  await expect(accepted(page)).toContainText("v5");
   await expect(page.getByRole("article", { name: "Server-released record", exact: true })).toHaveCount(0);
   await expect(versions(page)).toHaveCount(0);
   expect(state.requests.filter(r => r.path.endsWith("/history"))).toHaveLength(1);
@@ -218,10 +222,10 @@ for (const action of ["switch", "sign-out", "refresh"] as const) test(`pending h
     finally { finished(); }
   });
   await openHistory(page); await started;
-  await expect(page.getByText("Loading clinical history...", { exact: true })).toBeVisible();
+  await expect(page.getByText("Loading history…", { exact: true })).toBeVisible();
   if (action === "switch") {
-    await page.getByLabel("Select authorized patient").selectOption(other);
-    await expect(page.getByText(`Patient context: ${other}`, { exact: true })).toBeVisible();
+    await selectPatient(page, other);
+    await selected(page, other);
   } else if (action === "sign-out") {
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await expect(page.getByLabel("Password", { exact: true })).toBeVisible();

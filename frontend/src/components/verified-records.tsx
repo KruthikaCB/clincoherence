@@ -103,7 +103,7 @@ export default function VerifiedRecords({ token, patient, facts, onDenied }: {
   }
 
   return (
-    <div style={{ padding: "1rem" }} aria-label="Verified Records">
+    <div style={{ padding: "1rem" }} role="region" aria-label="Verified Records">
       <div style={{ marginBottom: "1rem" }}>
         <div style={{ fontSize: "0.75rem", color: "#6b7280", lineHeight: 1.5 }}>
           Request a technically verified, server-released restatement of an accepted record.
@@ -153,7 +153,7 @@ export default function VerifiedRecords({ token, patient, facts, onDenied }: {
             {busy ? <><span className="cc-spinner" /> Requesting…</> : "Request Verified Record"}
           </button>
 
-          {error && <div className="cc-banner error" style={{ marginTop: "0.75rem" }} role="alert">{error}</div>}
+          {error && <div className="cc-banner error" style={{ marginTop: "0.75rem" }} role="alert" aria-label="Verified record error">{error}</div>}
 
           <div aria-live="polite" style={{ marginTop: "0.75rem" }}>
             {!records.length && !error && !busy && (
@@ -162,7 +162,7 @@ export default function VerifiedRecords({ token, patient, facts, onDenied }: {
               </div>
             )}
             {records.map(record => (
-              <div key={record.claim_id} className="cc-answer-card">
+              <div key={record.claim_id} role="article" aria-label="Server-released record" className="cc-answer-card">
                 <strong>Technically verified record restatement</strong>
                 {record.text}
               </div>

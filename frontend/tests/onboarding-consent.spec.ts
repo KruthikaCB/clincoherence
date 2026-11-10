@@ -1,3 +1,4 @@
+import { accepted, patients, selectPatient, selected } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 
 const patient = "11111111-1111-4111-8111-111111111111";
@@ -66,14 +67,15 @@ async function login(page: Page) {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
 async function create(page: Page) {
-  await page.getByLabel("Invited synthetic identity").fill("New.Patient@synthetic.invalid");
-  await page.getByRole("button", { name: "Create patient invitation", exact: true }).click();
+  await page.getByRole("button", { name: "Patient Invitations", exact: true }).click();
+  await page.getByLabel("Intended synthetic identity").fill("New.Patient@synthetic.invalid");
+  await page.getByRole("button", { name: "Create invitation", exact: true }).click();
 }
-const accepted = (page: Page) => page.getByRole("article", { name: "Accepted fact", exact: true });
 
 test("patient automatically opens own profile rather than account UUID", async ({ page }) => {
   const state = await setup(page, "patient"); await login(page);
   await expect(accepted(page)).toHaveCount(1);
+  await page.getByRole("button", { name: "Consent", exact: true }).click();
   await expect(page.getByRole("region", { name: "Practitioner consent", exact: true })).toBeVisible();
   expect(state.requests.some(r => r.path === `/api/v1/patients/${patient}/facts`)).toBe(true);
   expect(state.requests.some(r => r.path.includes(`/patients/${actor}/`))).toBe(false);
@@ -83,40 +85,40 @@ test("patient automatically opens own profile rather than account UUID", async (
 
 test("practitioner chooses only discovered profiles and sees own practitioner profile", async ({ page }) => {
   const state = await setup(page, "practitioner"); await login(page);
-  const select = page.getByLabel("Select authorized patient");
-  await expect(select.locator("option")).toHaveCount(3);
-  await expect(page.getByText(`Your practitioner profile: ${practitioner}`, { exact: true })).toBeVisible();
+  await expect(patients(page)).toHaveCount(2);
+  await expect(page.getByText("Practitioner account", { exact: true })).toBeVisible();
+  expect(state.requests.some(r => r.path === "/api/v1/auth/profile")).toBe(true);
   expect(state.requests.some(r => r.path.endsWith("/facts"))).toBe(false);
-  await select.selectOption(patient); await expect(accepted(page)).toHaveCount(1);
-  await select.selectOption(other); await expect(page.getByText(`Patient context: ${other}`, { exact: true })).toBeVisible();
+  await selectPatient(page, patient); await expect(accepted(page)).toHaveCount(1);
+  await selectPatient(page, other); await selected(page, other);
   expect(state.requests.some(r => r.path.includes(`/patients/${practitioner}/`))).toBe(false);
 });
 
 test("empty authorized list does not offer invited or arbitrary patients", async ({ page }) => {
   const state = await setup(page, "practitioner", { empty: true }); await login(page);
-  await expect(page.getByText(/No currently authorized patients\./)).toBeVisible();
-  await expect(page.getByLabel("Select authorized patient").locator("option")).toHaveCount(1);
+  await expect(page.getByText(/No patients yet/)).toBeVisible();
+  await expect(patients(page)).toHaveCount(0);
   await create(page);
-  await expect(page.getByLabel("Copyable invitation link", { exact: true })).toHaveValue(`http://localhost:3000/activate#token=${token}`);
+  await expect(page.getByLabel("Invitation link (share with patient)", { exact: true })).toHaveValue(`http://localhost:3000/activate#token=${token}`);
   state.invitationStatus = "consumed";
-  await page.getByRole("button", { name: "Check invitation status", exact: true }).click();
-  await expect(page.getByText("Invitation status: consumed", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Refresh authorized patients", exact: true }).click();
-  await expect(page.getByText(/No currently authorized patients\./)).toBeVisible();
+  await page.getByRole("button", { name: "Check status", exact: true }).click();
+  await expect(page.getByText("consumed", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh patients", exact: true }).click();
+  await expect(page.getByText(/No patients yet/)).toBeVisible();
   expect(state.requests.some(r => r.path.includes("/consents") || r.path.endsWith("/activate"))).toBe(false);
 });
 
 test("invitation link/code are separate, status/revocation use known UUID and no storage or navigation", async ({ page }) => {
   const state = await setup(page, "practitioner"); await login(page); await create(page);
-  await expect(page.getByLabel("Copyable invitation link", { exact: true })).toHaveValue(`http://localhost:3000/activate#token=${token}`);
+  await expect(page.getByLabel("Invitation link (share with patient)", { exact: true })).toHaveValue(`http://localhost:3000/activate#token=${token}`);
   await page.getByText("Reveal separate verification code", { exact: true }).click();
-  await expect(page.getByLabel("Copyable separate verification code", { exact: true })).toHaveValue(code);
-  await page.getByRole("button", { name: "Check invitation status", exact: true }).click();
-  await expect(page.getByText("Invitation status: pending", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Review invitation revocation", exact: true }).click();
-  expect(state.requests.some(r => r.path.endsWith("/revoke"))).toBe(false);
+  await expect(page.getByLabel("Verification code (deliver via separate channel)", { exact: true })).toHaveValue(code);
+  await page.getByRole("button", { name: "Check status", exact: true }).click();
+  await expect(page.getByText("pending", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Revoke invitation", exact: true }).click();
-  await expect(page.getByText("Invitation status: revoked", { exact: true })).toBeVisible();
+  expect(state.requests.some(r => r.path.endsWith("/revoke"))).toBe(false);
+  await page.getByRole("button", { name: "Confirm revoke", exact: true }).click();
+  await expect(page.getByText("revoked", { exact: true })).toBeVisible();
   await expect(page.getByText(`/activate#token=${token}`, { exact: false })).toHaveCount(0);
   expect(state.requests.filter(r => r.path.startsWith("/api/v1/patient-invitations/")).every(r => !r.path.includes(token) && !r.path.includes(code))).toBe(true);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie, location.hash, location.search])).toEqual([0, 0, "", "", ""]);
@@ -125,7 +127,7 @@ test("invitation link/code are separate, status/revocation use known UUID and no
 test("patient switching and sign out discard invitation secrets", async ({ page }) => {
   await setup(page, "practitioner"); await login(page); await create(page);
   await expect(page.getByRole("region", { name: "Invitation link", exact: true })).toBeVisible();
-  await page.getByLabel("Select authorized patient").selectOption(patient);
+  await selectPatient(page, patient);
   await expect(accepted(page)).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Invitation link", exact: true })).toHaveCount(0);
   await create(page); await expect(page.getByRole("region", { name: "Invitation link", exact: true })).toBeVisible();
@@ -136,15 +138,16 @@ test("patient switching and sign out discard invitation secrets", async ({ page 
 
 test("consent grant, server refresh and explicit revoke never select patient or actor in body", async ({ page }) => {
   const state = await setup(page, "patient"); await login(page);
+  await page.getByRole("button", { name: "Consent", exact: true }).click();
   await expect(page.getByText("No practitioner consent relationships.", { exact: true })).toBeVisible();
   await page.getByLabel("Practitioner profile UUID", { exact: true }).fill(practitioner);
-  await page.getByRole("button", { name: "Grant practitioner access", exact: true }).click();
-  await expect(page.getByText("Status: granted", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Grant access", exact: true }).click();
+  await expect(page.getByText("granted", { exact: true })).toBeVisible();
   await expect(accepted(page)).toHaveCount(0);
-  await page.getByRole("button", { name: "Review access revocation", exact: true }).click();
+  await page.getByRole("button", { name: "Revoke", exact: true }).click();
   expect(state.requests.some(r => r.path.endsWith("/revoke"))).toBe(false);
-  await page.getByRole("button", { name: "Confirm revoke access", exact: true }).click();
-  await expect(page.getByText("Status: revoked", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Confirm revoke", exact: true }).click();
+  await expect(page.getByText("revoked", { exact: true })).toBeVisible();
   expect(state.requests.filter(r => r.method === "POST" && r.path.includes("/consents")).map(r => r.body)).toEqual([{ practitioner_id: practitioner }, {}]);
   expect(state.requests.filter(r => r.method === "GET" && r.path.endsWith("/consents")).length).toBeGreaterThanOrEqual(3);
   await expect(page.getByRole("region", { name: "Practitioner invitations", exact: true })).toHaveCount(0);
@@ -152,7 +155,8 @@ test("consent grant, server refresh and explicit revoke never select patient or 
 
 for (const kind of ["invitation", "consent"]) for (const failure of ["network", "timeout"]) test(`uncertain ${kind} ${failure} mutation never automatically retries`, async ({ page }) => {
   await setup(page, kind === "invitation" ? "practitioner" : "patient"); await login(page);
-  if (kind === "consent") await expect(page.getByRole("button", { name: "Grant practitioner access", exact: true })).toBeEnabled();
+  if (kind === "consent") await page.getByRole("button", { name: "Consent", exact: true }).click();
+  if (kind === "consent") await expect(page.getByRole("button", { name: "Grant access", exact: true })).toBeEnabled();
   await page.clock.install();
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -164,7 +168,7 @@ for (const kind of ["invitation", "consent"]) for (const failure of ["network", 
   });
   if (kind === "invitation") await create(page);
   else {
-    const grant = page.getByRole("button", { name: "Grant practitioner access", exact: true });
+    const grant = page.getByRole("button", { name: "Grant access", exact: true });
     await expect(grant).toBeEnabled();
     await page.getByLabel("Practitioner profile UUID", { exact: true }).fill(practitioner); await grant.click();
   }
@@ -172,17 +176,17 @@ for (const kind of ["invitation", "consent"]) for (const failure of ["network", 
   if (failure === "timeout") await page.clock.fastForward(20001);
   await expect(page.getByRole("alert", { name: kind === "invitation" ? "Invitation error" : "Consent error" })).toContainText(/No automatic retry/);
   await page.clock.fastForward(200); expect(calls).toBe(1); release();
-  if (kind === "consent") await expect(page.getByRole("button", { name: "Grant practitioner access", exact: true })).toBeDisabled();
+  if (kind === "consent") await expect(page.getByRole("button", { name: "Grant access", exact: true })).toBeDisabled();
 });
 
 test("malformed invitation status is withheld instead of coerced", async ({ page }) => {
   await setup(page, "practitioner"); await login(page); await create(page);
-  await expect(page.getByLabel("Copyable invitation link", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Invitation link (share with patient)", { exact: true })).toBeVisible();
   await page.route(`**/patient-invitations/${invitation}`, route => route.fulfill({ json: { invitation_id: invitation, patient_id: invitedPatient, status: ["pending"], expires_at: expiry } }));
-  await page.getByRole("button", { name: "Check invitation status", exact: true }).click();
+  await page.getByRole("button", { name: "Check status", exact: true }).click();
   await expect(page.getByRole("alert", { name: "Invitation error" })).toBeVisible();
-  await expect(page.getByLabel("Copyable invitation link", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Invitation status: pending", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Invitation link (share with patient)", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("pending", { exact: true })).toHaveCount(0);
 });
 
 test("late discovery from signed-out patient cannot overwrite a new practitioner session", async ({ page }) => {
@@ -202,7 +206,7 @@ test("late discovery from signed-out patient cannot overwrite a new practitioner
   await login(page); await started;
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   role = "practitioner"; await login(page);
-  await expect(page.getByText(`Your practitioner profile: ${practitioner}`, { exact: true })).toBeVisible(); release();
+  await expect(patients(page)).toHaveCount(2); release();
   await expect(page.getByRole("region", { name: "Practitioner consent", exact: true })).toHaveCount(0);
   await expect(accepted(page)).toHaveCount(0);
 });
@@ -233,7 +237,7 @@ test("late invitation creation after patient switch cannot restore secrets", asy
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route("**/api/v1/patient-invitations", async route => { entered(); await gate; await route.fulfill({ status: 201, json: { invitation_id: invitation, patient_id: invitedPatient, invitation_url: `http://localhost:3000/activate#token=${token}`, prototype_verification_code: code, expires_at: expiry, prototype_notice: notice } }).catch(() => {}); });
   await create(page); await started;
-  await page.getByLabel("Select authorized patient").selectOption(patient);
+  await selectPatient(page, patient);
   await expect(accepted(page)).toHaveCount(1); release();
   await expect(page.getByRole("region", { name: "Invitation link", exact: true })).toHaveCount(0);
 });
@@ -244,15 +248,15 @@ test("late clinical response cannot overwrite a newly selected patient", async (
   const started = new Promise<void>(resolve => { entered = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route(`**/patients/${patient}/facts`, async route => { entered(); await gate; await route.fulfill({ json: [{ patient_id: patient, status: "CONFIRMED", fact: { kind: "history", category: "other", description: "STALE PATIENT CONTENT" } }] }).catch(() => {}); });
-  await page.getByLabel("Select authorized patient").selectOption(patient); await started;
-  await page.getByLabel("Select authorized patient").selectOption(other);
-  await expect(page.getByText(`Patient context: ${other}`, { exact: true })).toBeVisible(); release();
+  await selectPatient(page, patient); await started;
+  await selectPatient(page, other);
+  await selected(page, other); release();
   await expect(page.getByText("STALE PATIENT CONTENT", { exact: true })).toHaveCount(0);
 });
 
 for (const status of [401, 403, 404]) test(`denied clinical request ${status} clears displayed clinical content`, async ({ page }) => {
   await setup(page, "practitioner"); await login(page);
-  await page.getByLabel("Select authorized patient").selectOption(patient); await expect(accepted(page)).toHaveCount(1);
+  await selectPatient(page, patient); await expect(accepted(page)).toHaveCount(1);
   await page.route(`**/patients/${patient}/facts`, route => route.fulfill({ status, json: { detail: "PRIVATE DENIAL" } }));
   await page.getByRole("button", { name: "Refresh server state", exact: true }).click();
   await expect(page.getByRole("alert", { name: "Request error" })).toBeVisible();

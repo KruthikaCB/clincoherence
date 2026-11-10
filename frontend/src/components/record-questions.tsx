@@ -81,7 +81,13 @@ export default function RecordQuestions({ token, patient, onDenied }: {
       {records.map(record => <article className="fact-card" aria-label="Released question record" key={record.claim_id}>
         <strong>Technically verified record restatement</strong><p className="source-text">{record.text}</p>
       </article>)}
-      {provenance.map(p => <section className="fact-card break-all" aria-label="Released synthetic provenance" key={p.claim_id}>
+      {provenance.map(p => <ProvenanceDetails key={p.claim_id} provenance={p} />)}
+    </div>
+  </section>;
+}
+
+export function ProvenanceDetails({ provenance: p }: { provenance: SyntheticProvenance }) {
+  return <section className="fact-card break-all" aria-label="Released synthetic provenance">
         <strong>SYNTHETIC DEMONSTRATION DATA — NOT CLINICAL GUIDANCE</strong>
         <p>Reference integrity: {p.integrity_status}. Structured applicability: {p.applicability_status}. Neither establishes clinical correctness or clinical support.</p>
         <dl><dt>Claim</dt><dd>{p.claim_id}</dd><dt>Accepted version</dt><dd>{p.fact_version_ids[0]}</dd>
@@ -92,7 +98,5 @@ export default function RecordQuestions({ token, patient, onDenied }: {
           <dt>Rule / version / hash</dt><dd>{p.rule_id} / {p.rule_version} / {p.rule_content_hash}</dd>
           <dt>Approval manifest / version / hash</dt><dd>{p.approval_manifest_id} / {p.approval_manifest_version} / {p.approval_manifest_hash}</dd>
           <dt>Intended use</dt><dd>{p.intended_use}</dd></dl>
-      </section>)}
-    </div>
-  </section>;
+      </section>;
 }

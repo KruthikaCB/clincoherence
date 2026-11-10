@@ -1,3 +1,4 @@
+import { accepted, selectPatient } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -61,30 +62,30 @@ async function setup(page: Page, options: { conflict?: boolean; denied?: number;
   await page.getByLabel("Account identity").fill("synthetic@example.test");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  if (options.practitioner) await page.getByLabel("Select authorized patient").selectOption(patient);
+  if (options.practitioner) await selectPatient(page, patient);
   return { decisions: () => decisions };
 }
 
 test("individual cards, independent decisions and accepted-state boundary", async ({ page }) => {
   await setup(page);
-  const cards = page.getByRole("article", { name: "Fact confirmation", exact: true });
+  const cards = page.getByRole("article", { name: "Extracted fact", exact: true });
   await expect(cards).toHaveCount(2);
   await expect(cards.first()).toContainText(quoteA);
   await expect(cards.first()).toContainText("Patient-reported");
-  await expect(page.getByRole("article", { name: "Accepted fact", exact: true })).toHaveCount(0);
-  await cards.first().getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(accepted(page)).toHaveCount(0);
+  await cards.first().getByRole("button", { name: "Accept", exact: true }).click();
   await expect(cards.first()).toContainText("CONFIRMED");
   await expect(cards.nth(1)).toContainText("PENDING");
   await cards.nth(1).getByRole("button", { name: "Reject", exact: true }).click();
   await expect(cards.nth(1)).toContainText("REJECTED");
-  await expect(page.getByRole("article", { name: "Accepted fact", exact: true })).toHaveCount(1);
+  await expect(accepted(page)).toHaveCount(1);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
 });
 
 test("duplicate clicks are guarded and confirmation is not optimistic", async ({ page }) => {
   const state = await setup(page);
-  const card = page.getByRole("article", { name: "Fact confirmation", exact: true }).first();
-  await card.getByRole("button", { name: "Confirm", exact: true }).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+  const card = page.getByRole("article", { name: "Extracted fact", exact: true }).first();
+  await card.getByRole("button", { name: "Accept", exact: true }).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   await expect(card).toContainText("PENDING");
   await expect(card).toContainText("CONFIRMED");
   expect(state.decisions()).toBe(1);
@@ -92,11 +93,11 @@ test("duplicate clicks are guarded and confirmation is not optimistic", async ({
 
 test("409 reloads the authoritative decision without adding an accepted fact", async ({ page }) => {
   await setup(page, { conflict: true });
-  const card = page.getByRole("article", { name: "Fact confirmation", exact: true }).first();
-  await card.getByRole("button", { name: "Confirm", exact: true }).click();
+  const card = page.getByRole("article", { name: "Extracted fact", exact: true }).first();
+  await card.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(card).toContainText("REJECTED");
   await expect(page.getByRole("status")).toContainText("Server state has been reloaded");
-  await expect(page.getByRole("article", { name: "Accepted fact", exact: true })).toHaveCount(0);
+  await expect(accepted(page)).toHaveCount(0);
 });
 
 for (const status of [401, 403, 404]) test(`authorization ${status} clears content and hides server details`, async ({ page }) => {
@@ -114,22 +115,22 @@ test("mismatched speaker response fails closed", async ({ page }) => {
 
 test("practitioner attribution and patient context switching clear conversation", async ({ page }) => {
   await setup(page, { practitioner: true });
-  await expect(page.getByRole("article", { name: "Fact confirmation", exact: true }).first()).toContainText("Practitioner-managed");
-  await page.getByRole("button", { name: "Change patient context" }).click();
+  await expect(page.getByRole("article", { name: "Extracted fact", exact: true }).first()).toContainText("Practitioner-managed");
+  await page.getByRole("button", { name: "Refresh patients", exact: true }).click();
   await expect(page.getByRole("article")).toHaveCount(0);
-  await expect(page.getByLabel("Select authorized patient").locator(`option[value="${other}"]`)).toHaveCount(0);
+  await expect(page.locator(`.cc-sidebar-patient[title="${other}"]`)).toHaveCount(0);
   await page.route(`**/patients/${patient}/facts`, route => route.fulfill({ status: 403, json: {} }));
-  await page.getByLabel("Select authorized patient").selectOption(patient);
+  await selectPatient(page, patient);
   await expect(page.getByRole("alert", { name: "Request error" })).toContainText("access denied");
   await expect(page.getByRole("article")).toHaveCount(0);
 });
 
 test("synthetic source message displays cards in chat and sign out clears them", async ({ page }) => {
   await setup(page);
-  await page.getByLabel("Synthetic message").fill(sourceText);
-  await page.getByRole("button", { name: "Send for extraction" }).click();
-  await expect(page.locator(".source-text")).toContainText("HbA1c: 7.1 %");
-  await expect(page.getByRole("article", { name: "Fact confirmation", exact: true })).toHaveCount(2);
+  await page.getByLabel("Clinical note").fill(sourceText);
+  await page.getByRole("button", { name: "Submit note for extraction" }).click();
+  await expect(page.locator(".cc-msg-user")).toContainText("HbA1c: 7.1 %");
+  await expect(page.getByRole("article", { name: "Extracted fact", exact: true })).toHaveCount(2);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
@@ -137,10 +138,10 @@ test("synthetic source message displays cards in chat and sign out clears them",
 
 for (const status of [401, 403, 404]) test(`decision authorization ${status} removes previously displayed content`, async ({ page }) => {
   await setup(page);
-  const card = page.getByRole("article", { name: "Fact confirmation", exact: true }).first();
+  const card = page.getByRole("article", { name: "Extracted fact", exact: true }).first();
   await expect(card).toBeVisible();
   await page.route("**/confirmations/*/confirm", route => route.fulfill({ status, json: { detail: "secret detail" } }));
-  await card.getByRole("button", { name: "Confirm", exact: true }).click();
+  await card.getByRole("button", { name: "Accept", exact: true }).click();
   await expect(page.getByRole("alert", { name: "Request error" })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(page.getByText("secret detail", { exact: true })).toHaveCount(0);
@@ -165,8 +166,8 @@ test("late extraction response cannot restore content after sign out", async ({ 
     await route.fulfill({ status: 201, json: { source_message_id: sourceId, confirmations: [{ ...item("a"), source_message_id: sourceId }] } }).catch(() => {});
     completed = true;
   });
-  await page.getByLabel("Synthetic message").fill("Synthetic text");
-  await page.getByRole("button", { name: "Send for extraction" }).click();
+  await page.getByLabel("Clinical note").fill("Synthetic text");
+  await page.getByRole("button", { name: "Submit note for extraction" }).click();
   await started;
   await page.getByRole("button", { name: "Sign out" }).click();
   release(); await expect.poll(() => completed).toBe(true);

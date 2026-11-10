@@ -1,3 +1,4 @@
+import { selectPatient, verified } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 
 const patient = "11111111-1111-4111-8111-111111111111";
@@ -30,11 +31,12 @@ async function setup(page: Page, practitioner = false, empty = false) {
   await page.getByLabel("Account identity").fill("synthetic@example.test");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  if (practitioner) await page.getByLabel("Select authorized patient").selectOption(patient);
+  if (practitioner) await selectPatient(page, patient);
+  await verified(page);
   await expect(page.getByRole("region", { name: "Verified Records", exact: true })).toBeVisible();
 }
 
-const requestButton = (page: Page) => page.getByRole("button", { name: "Request verified record", exact: true });
+const requestButton = (page: Page) => page.getByRole("button", { name: "Request Verified Record", exact: true });
 const records = (page: Page) => page.getByRole("article", { name: "Server-released record", exact: true });
 
 for (const practitioner of [false, true]) test(`${practitioner ? "practitioner" : "patient"} exact request and server-only rendering`, async ({ page }) => {
@@ -59,7 +61,7 @@ for (const practitioner of [false, true]) test(`${practitioner ? "practitioner" 
     return route.fulfill({ json: { representation_version: "record-response-json-v1", records: [{ claim_id: draft.claims[0].claim_id, text: "SERVER-ONLY RESTATEMENT <script>synthetic</script>" }] } });
   });
   await expect(records(page)).toHaveCount(0);
-  await expect(page.getByRole("article", { name: "Accepted fact", exact: true })).toHaveCount(1);
+  await expect(page.getByLabel("Select accepted record").locator("option")).toHaveCount(1);
   await requestButton(page).click();
   await expect(records(page)).toContainText("SERVER-ONLY RESTATEMENT <script>synthetic</script>");
   await expect(page.getByText(/Technical verification is not medical correctness/)).toBeVisible();
@@ -116,9 +118,9 @@ for (const change of ["sign out", "patient switch"]) test(`late result suppresse
   await requestButton(page).evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
   await started;
   expect(calls).toBe(1);
-  await page.getByRole("button", { name: change === "sign out" ? "Sign out" : "Change patient context", exact: true }).click();
+  if (change === "sign out") await page.getByRole("button", { name: "Sign out", exact: true }).click();
   if (change === "patient switch") {
-    await page.getByLabel("Select authorized patient").selectOption(other);
+    await selectPatient(page, other);
   }
   release();
   await expect(page.getByText("STALE PRIVATE RELEASE", { exact: true })).toHaveCount(0);
@@ -154,7 +156,8 @@ for (const malformed of ["wrong claim", "wrong version", "extra content", "trunc
 
 test("no accepted record means no verification request", async ({ page }) => {
   await setup(page, false, true);
-  await expect(requestButton(page)).toBeDisabled();
+  await expect(requestButton(page)).toHaveCount(0);
+  await expect(page.getByText("No accepted records available. Accept some extracted facts first.", { exact: true })).toBeVisible();
   await expect(records(page)).toHaveCount(0);
 });
 

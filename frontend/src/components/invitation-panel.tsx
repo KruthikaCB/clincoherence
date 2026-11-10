@@ -69,7 +69,7 @@ export default function InvitationPanel({ token, onDenied }: { token: string; on
   }
 
   return (
-    <div style={{ padding: "1rem" }} aria-label="Patient invitations">
+    <div style={{ padding: "1rem" }} role="region" aria-label="Patient invitations">
       <div style={{ marginBottom: "1rem", padding: "0.65rem 0.75rem", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "var(--radius)", fontSize: "0.78rem", color: "#78350f", lineHeight: 1.5 }}>
         Prototype-only synthetic-user verification, not production identity assurance.
         Invitation issuance and activation never grant record access — the patient must separately consent.
@@ -91,7 +91,7 @@ export default function InvitationPanel({ token, onDenied }: { token: string; on
 
       {/* Created invitation secrets */}
       {created && (
-        <div className="cc-card" style={{ marginBottom: "1rem", borderColor: "#86efac" }}>
+        <div className="cc-card" role="region" aria-label="Invitation link" style={{ marginBottom: "1rem", borderColor: "#86efac" }}>
           <div className="cc-card-head" style={{ background: "#f0fdf4" }}>
             <h3 style={{ margin: 0, color: "#15803d" }}>Invitation created</h3>
             <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>Secrets disappear on page reload</span>
@@ -167,7 +167,7 @@ export default function InvitationPanel({ token, onDenied }: { token: string; on
       </div>
 
       {busy && <div style={{ fontSize: "0.78rem", color: "#6b7280", display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.5rem" }}><span className="cc-spinner" /> Working…</div>}
-      {error && <div className="cc-banner error" role="alert" style={{ marginTop: "0.75rem" }}>{error}</div>}
+      {error && <div className="cc-banner error" role="alert" aria-label="Invitation error" style={{ marginTop: "0.75rem" }}>{error}</div>}
     </div>
   );
 }

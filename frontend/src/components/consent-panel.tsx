@@ -68,7 +68,7 @@ export default function ConsentPanel({ token, onDenied, onMutation }: {
   }
 
   return (
-    <div style={{ padding: "1rem" }} aria-label="Practitioner consent">
+    <div style={{ padding: "1rem" }} role="region" aria-label="Practitioner consent">
       <div style={{ marginBottom: "1rem", padding: "0.75rem", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "var(--radius)", fontSize: "0.78rem", color: "#78350f", lineHeight: 1.6 }}>
         Only you can explicitly grant or revoke access to your record. Activation and invitations grant no consent.
         Revocation blocks subsequent requests but cannot recall information already viewed.
@@ -131,7 +131,7 @@ export default function ConsentPanel({ token, onDenied, onMutation }: {
         </div>
       )}
 
-      {error && <div className="cc-banner error" role="alert" style={{ marginTop: "0.75rem" }}>{error}</div>}
+      {error && <div className="cc-banner error" role="alert" aria-label="Consent error" style={{ marginTop: "0.75rem" }}>{error}</div>}
     </div>
   );
 }

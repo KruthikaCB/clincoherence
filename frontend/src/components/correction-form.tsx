@@ -52,7 +52,7 @@ export default function CorrectionForm({ current, onSubmit, onCancel }: {
   const invalidate = () => { reviewed.current = null; setReview(null); setError(""); };
 
   return (
-    <div className="cc-card" aria-label="Structured correction">
+    <div className="cc-card" role="region" aria-label="Structured correction">
       <div className="cc-card-head">
         <div>
           <h3 style={{ margin: 0 }}>Correct recorded information</h3>
@@ -155,10 +155,10 @@ export default function CorrectionForm({ current, onSubmit, onCancel }: {
           </fieldset>
         </form>
 
-        {error && <div className="cc-banner error" role="alert" style={{ marginTop: "0.65rem" }}>{error}</div>}
+        {error && <div className="cc-banner error" role="alert" aria-label="Correction validation error" style={{ marginTop: "0.65rem" }}>{error}</div>}
 
         {review && (
-          <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "var(--radius)" }} aria-label="Review new version">
+          <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "var(--radius)" }} role="region" aria-label="Review new version">
             <div style={{ fontWeight: 600, fontSize: "0.82rem", marginBottom: "0.5rem", color: "#15803d" }}>Review new version</div>
             <FactDetails fact={review.fact} />
             <div style={{ fontSize: "0.78rem", color: "#374151", marginTop: "0.4rem" }}>

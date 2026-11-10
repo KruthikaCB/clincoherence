@@ -1,3 +1,4 @@
+import { selectPatient } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 import bundle from "../../backend/app/fixtures/evidence/bundle.json";
 import rules from "../../backend/app/fixtures/evidence/rules.json";
@@ -7,9 +8,9 @@ const patient = "11111111-1111-4111-8111-111111111111";
 const other = "22222222-2222-4222-8222-222222222222";
 const claim = "33333333-3333-4333-8333-333333333333";
 const question = "What is my latest recorded hba1c?";
-const panel = (page: Page) => page.getByRole("region", { name: "Record questions", exact: true });
+const panel = (page: Page) => page.locator(".cc-input-area");
 const provenance = (page: Page) => page.getByRole("region", { name: "Released synthetic provenance", exact: true });
-const records = (page: Page) => page.getByRole("article", { name: "Released question record", exact: true });
+const records = (page: Page) => page.locator(".cc-msg-assistant.result");
 function responseBody() {
   const rule = rules.rules[0];
   return { representation_version: "record-evidence-json-v2", records: [{ claim_id: claim, text: "Synthetic server-rendered HbA1c record" }], provenance: [{
@@ -35,7 +36,8 @@ async function setup(page: Page, role = "patient") {
   await page.getByLabel("Account identity").fill("evidence@synthetic.invalid");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-evidence-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  if (role === "practitioner") await page.getByLabel("Select authorized patient").selectOption(patient);
+  if (role === "practitioner") await selectPatient(page, patient);
+  await page.getByRole("button", { name: "Ask Patient Records", exact: true }).click();
   await expect(panel(page)).toBeVisible();
   await panel(page).getByLabel("Record question", { exact: true }).fill(question);
   await panel(page).getByRole("checkbox", { name: "Include synthetic demonstration provenance", exact: true }).check();
@@ -49,7 +51,7 @@ for (const role of ["patient", "practitioner"]) test(`${role} displays released 
     expect(body.include_synthetic_provenance === true && body.question === question).toBe(true);
     return route.fulfill({ json: responseBody() });
   });
-  await panel(page).getByRole("button", { name: "Ask records", exact: true }).click();
+  await panel(page).getByRole("button", { name: "Ask", exact: true }).click();
   await expect(records(page)).toHaveCount(1);
   await expect(provenance(page)).toContainText("SYNTHETIC DEMONSTRATION DATA — NOT CLINICAL GUIDANCE");
   await expect(provenance(page)).toContainText(bundle.sources[0].title);
@@ -57,8 +59,9 @@ for (const role of ["patient", "practitioner"]) test(`${role} displays released 
   await expect(provenance(page)).toContainText("Neither establishes clinical correctness or clinical support");
   await expect(provenance(page).getByRole("link")).toHaveCount(0);
   await panel(page).getByRole("checkbox").uncheck();
-  await expect(records(page)).toHaveCount(0);
-  await expect(provenance(page)).toHaveCount(0);
+  // Changing the next request option does not rewrite prior chat messages.
+  await expect(records(page)).toHaveCount(1);
+  await expect(provenance(page)).toHaveCount(1);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie])).toEqual([0, 0, ""]);
 });
 
@@ -72,8 +75,8 @@ for (const fault of ["claim", "status", "hash", "source", "support", "extra", "v
   if (fault === "source") p.source.canonical_location = "https://untrusted.invalid/source";
   if (fault === "support") p.clinical_support_asserted = true;
   await page.route("**/record-questions", route => route.fulfill({ json: fault === "v1" ? { representation_version: "record-response-json-v1", records: body.records } : fault === "extra" ? { ...body, approved: true } : body }));
-  await panel(page).getByRole("button", { name: "Ask records", exact: true }).click();
-  await expect(panel(page).getByRole("alert")).toBeVisible();
+  await panel(page).getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".cc-msg-assistant.error")).toBeVisible();
   await expect(records(page)).toHaveCount(0);
   await expect(provenance(page)).toHaveCount(0);
 });
@@ -89,8 +92,8 @@ for (const action of ["switch", "sign-out", "refresh", "revoke"]) test(`provenan
     try { await route.fulfill({ status: action === "revoke" ? 403 : 200, json: responseBody() }); } catch { /* Unmounted request. */ } finally { finished(); }
   });
   try {
-    await panel(page).getByRole("button", { name: "Ask records", exact: true }).click(); await started;
-    if (action === "switch") await page.getByLabel("Select authorized patient").selectOption(other);
+    await panel(page).getByRole("button", { name: "Ask", exact: true }).click(); await started;
+    if (action === "switch") await selectPatient(page, other);
     if (action === "sign-out") await page.getByRole("button", { name: "Sign out", exact: true }).click();
     if (action === "refresh") await page.getByRole("button", { name: "Refresh server state", exact: true }).click();
     release(); await completed;

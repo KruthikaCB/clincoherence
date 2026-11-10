@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("login links to explicit demo-only registration", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "Create Account", exact: true })).toHaveAttribute("href", "/register");
+  await expect(page.getByRole("link", { name: "Create a demo practitioner account", exact: true })).toHaveAttribute("href", "/register");
 });
 
 test("disabled backend cannot submit registration", async ({ page }) => {

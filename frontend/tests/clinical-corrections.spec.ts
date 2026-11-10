@@ -1,3 +1,4 @@
+import { accepted, selectPatient, history, verified, selected } from "./dashboard";
 import { test, expect, Page } from "@playwright/test";
 import type { Account, AcceptedFact, CorrectionRequest } from "../src/components/clinical-types";
 
@@ -69,76 +70,81 @@ async function setup(page: Page, role: Account["role"] = "patient") {
   await page.getByLabel("Account identity").fill("corrections@synthetic.invalid");
   await page.getByLabel("Password", { exact: true }).fill("synthetic-correction-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  if (role === "practitioner") await page.getByLabel("Select authorized patient").selectOption(patient);
-  await expect(page.getByRole("article", { name: "Accepted fact", exact: true })).toHaveCount(2);
+  if (role === "practitioner") await selectPatient(page, patient);
+  await expect(accepted(page)).toHaveCount(2);
+  await history(page);
   return state;
 }
 const form = (page: Page) => page.getByRole("region", { name: "Structured correction", exact: true });
 async function edit(page: Page) {
-  await page.getByRole("button", { name: "Correct record", exact: true }).click();
+  await page.getByRole("button", { name: "Correct", exact: true }).click();
   await expect(form(page)).toBeVisible();
-  await form(page).getByLabel("Correction reason", { exact: true }).fill("Correct synthetic recorded information");
+  await form(page).getByText("Provenance (source, reference, data origin)", { exact: true }).click();
+  await form(page).getByRole("textbox", { name: "Correction reason (required)", exact: true }).fill("Correct synthetic recorded information");
 }
 async function review(page: Page) {
   await form(page).getByRole("button", { name: "Review correction", exact: true }).click();
   await expect(page.getByRole("region", { name: "Review new version", exact: true })).toBeVisible();
 }
-async function submit(page: Page) { await page.getByRole("button", { name: "Submit new version", exact: true }).click(); }
+async function submit(page: Page) { await page.getByRole("button", { name: "Submit correction", exact: true }).click(); }
 
 for (const role of ["patient", "practitioner"] as const) test(`${role} category permission, immutable history and verified invalidation`, async ({ page }) => {
   const state = await setup(page, role);
-  const cards = page.getByRole("article", { name: "Accepted fact", exact: true });
+  const cards = accepted(page);
   const eligible = cards.nth(role === "patient" ? 0 : 1), ineligible = cards.nth(role === "patient" ? 1 : 0);
-  await expect(eligible.getByRole("button", { name: "Correct record", exact: true })).toHaveCount(1);
-  await expect(ineligible.getByRole("button", { name: "Correct record", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Request verified record", exact: true }).click();
+  await expect(eligible.getByRole("button", { name: "Correct", exact: true })).toHaveCount(1);
+  await expect(ineligible.getByRole("button", { name: "Correct", exact: true })).toHaveCount(0);
+  await verified(page);
+  await page.getByRole("button", { name: "Request Verified Record", exact: true }).click();
   await expect(page.getByRole("article", { name: "Server-released record", exact: true })).toHaveCount(1);
+  await history(page);
   await edit(page);
   expect(state.reads).toBeGreaterThan(0);
-  await form(page).getByLabel("Laboratory value", { exact: true }).fill("7.2000000000");
+  await form(page).getByLabel("Value", { exact: true }).fill("7.2000000000");
   await form(page).getByLabel("Provenance source", { exact: true }).fill("explicit synthetic correction");
   await review(page);
   expect(state.posts).toHaveLength(0);
   const expected = state.chains[role === "patient" ? 0 : 1][0].version_id;
   await expect(form(page).getByLabel("Expected current version ID")).toHaveValue(expected);
   await submit(page);
-  await expect(page.getByRole("status").filter({ hasText: "Correction acknowledged" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Correction saved" })).toBeVisible();
   await expect(page.getByRole("article", { name: "Clinical fact version", exact: true })).toHaveCount(2);
   expect(state.posts).toHaveLength(1);
   expect(state.posts[0].expected_version_id).toBe(expected);
   expect(state.posts[0].fact).toMatchObject({ value: "7.2000000000" });
   await expect(page.getByText("PRIOR VERIFIED RESTATEMENT", { exact: true })).toHaveCount(0);
-  const history = page.getByRole("region", { name: "Accepted correction history", exact: true });
-  await expect(history).toContainText("Version 1 — Superseded");
-  await expect(history).toContainText("Version 3 — Current accepted version");
-  if (role === "practitioner") await expect(history).toContainText(originalDoctor); // Not original-author-only.
+  const correctionHistory = page.getByRole("region", { name: "Accepted correction history", exact: true });
+  await expect(correctionHistory).toContainText(/Version 1.*Superseded/);
+  await expect(correctionHistory).toContainText(/Version 3.*Current/);
+  if (role === "practitioner") await expect(correctionHistory).toContainText(originalDoctor); // Not original-author-only.
 });
 
 for (const kind of ["laboratory", "diagnosis", "medication", "symptom", "history"] as const) test(`replacement payload ${kind}, including cross-kind/code`, async ({ page }) => {
   const state = await setup(page);
+  await history(page);
   await edit(page);
   await form(page).getByLabel("Replacement fact type").selectOption(kind);
   if (kind === "laboratory") {
     await form(page).getByLabel("Laboratory code").selectOption("glucose");
-    await form(page).getByLabel("Laboratory value", { exact: true }).fill("100.0000000000");
-    await form(page).getByLabel("Laboratory unit").fill("mg/dL");
-  } else if (kind === "diagnosis") await form(page).getByLabel("Diagnosis description (optional)").fill("Corrected recorded diagnosis description");
+    await form(page).getByLabel("Value", { exact: true }).fill("100.0000000000");
+    await form(page).getByLabel("Unit", { exact: true }).fill("mg/dL");
+  } else if (kind === "diagnosis") await form(page).getByLabel("Description (optional)").fill("Corrected recorded diagnosis description");
   else if (kind === "medication") {
-    await form(page).getByLabel("Recorded medication name").fill("Synthetic recorded medication");
-    await form(page).getByLabel("Recorded dose value (optional)").fill("0.1000000000");
-    await form(page).getByLabel("Recorded dose unit (optional)").fill("mg");
-    await form(page).getByLabel("Recorded frequency (optional)").fill("Recorded schedule");
+    await form(page).getByLabel("Medication name").fill("Synthetic recorded medication");
+    await form(page).getByLabel("Dose value (optional)").fill("0.1000000000");
+    await form(page).getByLabel("Dose unit (optional)").fill("mg");
+    await form(page).getByLabel("Frequency (optional)").fill("Recorded schedule");
   } else if (kind === "symptom") {
     await form(page).getByLabel("Symptom code").selectOption("fatigue");
-    await form(page).getByLabel("Symptom description").fill("Corrected synthetic symptom");
+    await form(page).getByLabel("Description").fill("Corrected synthetic symptom");
   } else {
-    await form(page).getByLabel("History category").selectOption("allergy");
-    await form(page).getByLabel("History description").fill("Corrected synthetic history");
+    await form(page).getByLabel("Category").selectOption("allergy");
+    await form(page).getByLabel("Description").fill("Corrected synthetic history");
   }
   await form(page).getByLabel("Observed at (ISO timestamp with timezone)").fill("2025-12-30T12:30:00+05:30");
-  await form(page).getByLabel("Provenance reference (optional)").fill("source:synthetic-reference");
+  await form(page).getByLabel("Reference (optional)").fill("source:synthetic-reference");
   await review(page); await submit(page);
-  await expect(page.getByRole("status").filter({ hasText: "Correction acknowledged" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Correction saved" })).toBeVisible();
   expect(state.posts[0].fact.kind).toBe(kind);
   expect(state.posts[0].observed_at).toBe("2025-12-30T12:30:00+05:30");
   expect(state.posts[0].provenance.reference).toBe("source:synthetic-reference");
@@ -148,54 +154,58 @@ for (const kind of ["laboratory", "diagnosis", "medication", "symptom", "history
 
 for (const invalid of ["precision", "timezone", "reason", "dose"] as const) test(`invalid ${invalid} is withheld before submission`, async ({ page }) => {
   const state = await setup(page); await edit(page);
-  if (invalid === "precision") await form(page).getByLabel("Laboratory value", { exact: true }).fill("7.10000000000000001");
+  if (invalid === "precision") await form(page).getByLabel("Value", { exact: true }).fill("7.10000000000000001");
   if (invalid === "timezone") await form(page).getByLabel("Observed at (ISO timestamp with timezone)").fill("2026-01-01T10:00:00");
-  if (invalid === "reason") await form(page).getByLabel("Correction reason", { exact: true }).fill("   ");
+  if (invalid === "reason") await form(page).getByRole("textbox", { name: "Correction reason (required)", exact: true }).fill("   ");
   if (invalid === "dose") {
     await form(page).getByLabel("Replacement fact type").selectOption("medication");
-    await form(page).getByLabel("Recorded medication name").fill("Synthetic medication");
-    await form(page).getByLabel("Recorded dose value (optional)").fill("0.1");
+    await form(page).getByLabel("Medication name").fill("Synthetic medication");
+    await form(page).getByLabel("Dose value (optional)").fill("0.1");
   }
   await form(page).getByRole("button", { name: "Review correction", exact: true }).click();
   await expect(page.getByRole("alert", { name: "Correction validation error", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Submit new version", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Submit correction", exact: true })).toHaveCount(0);
   expect(state.posts).toHaveLength(0);
 });
 
 test("editing reviewed fields requires another explicit review", async ({ page }) => {
   const state = await setup(page); await edit(page); await review(page);
-  await form(page).getByLabel("Laboratory value", { exact: true }).fill("7.3000000000");
-  await expect(page.getByRole("button", { name: "Submit new version", exact: true })).toHaveCount(0);
+  await form(page).getByLabel("Value", { exact: true }).fill("7.3000000000");
+  await expect(page.getByRole("button", { name: "Submit correction", exact: true })).toHaveCount(0);
   expect(state.posts).toHaveLength(0);
   await review(page); await submit(page);
-  await expect(page.getByRole("status").filter({ hasText: "Correction acknowledged" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Correction saved" })).toBeVisible();
 });
 
 test("409 reloads current version and never resubmits without fresh review", async ({ page }) => {
   const state = await setup(page); state.outcome = "conflict";
+  await history(page);
   await edit(page); await review(page); await submit(page);
   await expect(page.getByRole("status").filter({ hasText: "stale (409)" })).toBeVisible();
   await expect(page.getByRole("article", { name: "Clinical fact version", exact: true })).toHaveCount(2);
   expect(state.posts).toHaveLength(1);
   state.outcome = "saved"; const reads = state.reads;
+  await history(page);
   await edit(page);
   expect(state.reads).toBeGreaterThan(reads);
   await expect(form(page).getByLabel("Expected current version ID")).toHaveValue(state.chains[0].at(-1)!.version_id);
   await review(page); await submit(page);
-  await expect(page.getByRole("status").filter({ hasText: "Correction acknowledged" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Correction saved" })).toBeVisible();
   expect(state.posts).toHaveLength(2);
   expect(state.posts[0].expected_version_id).not.toBe(state.posts[1].expected_version_id);
 });
 
 for (const outcome of ["lost", "lost-committed", "malformed", "validation"] as const) test(`${outcome} acknowledgement requires fresh check and no automatic write retry`, async ({ page }) => {
   const state = await setup(page); state.outcome = outcome;
+  await history(page);
   await edit(page); await review(page); await submit(page);
-  await expect(page.getByRole("status").filter({ hasText: outcome === "validation" ? "values were rejected" : "acknowledgement is uncertain" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: outcome === "validation" ? "values rejected" : "outcome uncertain" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Accepted correction history", exact: true })).toBeVisible();
   expect(state.posts).toHaveLength(1);
   await expect(page.getByText("DO NOT DISPLAY", { exact: true })).toHaveCount(0);
   await expect(form(page)).toHaveCount(0);
   const reads = state.reads;
+  await history(page);
   await edit(page);
   expect(state.reads).toBeGreaterThan(reads);
   expect(state.posts).toHaveLength(1);
@@ -215,10 +225,11 @@ test("timed-out acknowledgement requires fresh history and no automatic write re
   try {
     await submit(page); await started;
     await page.clock.fastForward(20001);
-    await expect(page.getByRole("status").filter({ hasText: "acknowledgement is uncertain" })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "outcome uncertain" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Accepted correction history", exact: true })).toBeVisible();
     const reads = state.reads;
-    await edit(page);
+    await history(page);
+  await edit(page);
     expect(state.reads).toBeGreaterThan(reads);
     expect(posts).toBe(1);
   } finally { release(); }
@@ -226,6 +237,7 @@ test("timed-out acknowledgement requires fresh history and no automatic write re
 
 test("revocation during correction denies access and clears protected state", async ({ page }) => {
   const state = await setup(page, "practitioner"); state.outcome = "denied";
+  await history(page);
   await edit(page); await review(page); await submit(page);
   await expect(page.getByRole("alert", { name: "Request error", exact: true })).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(0);
@@ -238,7 +250,7 @@ for (const denial of ["revoked", "cross-patient"] as const) test(`${denial} fres
   await page.route("**/history", route => route.fulfill(denial === "revoked"
     ? { status: 403, json: { detail: "PRIVATE DENIAL" } }
     : { json: [{ ...state.chains[0][0], patient_id: other }] }));
-  await page.getByRole("button", { name: "Correct record", exact: true }).click();
+  await page.getByRole("button", { name: "Correct", exact: true }).click();
   await expect(page.getByRole("alert", { name: denial === "revoked" ? "Request error" : "Clinical history error", exact: true })).toBeVisible();
   await expect(form(page)).toHaveCount(0);
   expect(state.posts).toHaveLength(0);
@@ -256,22 +268,23 @@ for (const action of ["duplicate", "switch", "sign-out"] as const) test(`pending
     try { await route.fulfill({ status: 503, json: { detail: "PRIVATE UNCERTAIN" } }); } catch { /* Context cancellation expected. */ }
     finally { finished(); }
   });
+  await history(page);
   await edit(page); await review(page);
-  await page.getByRole("button", { name: "Submit new version", exact: true }).evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click(); });
+  await page.getByRole("button", { name: "Submit correction", exact: true }).evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click(); });
   await started; expect(posts).toBe(1);
   if (action === "switch") {
-    await page.getByLabel("Select authorized patient").selectOption(other);
-    await expect(page.getByText(`Patient context: ${other}`, { exact: true })).toBeVisible();
+    await selectPatient(page, other);
+    await selected(page, other);
   } else if (action === "sign-out") {
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
   }
   release(); await completed;
-  if (action === "duplicate") await expect(page.getByRole("status").filter({ hasText: "acknowledgement is uncertain" })).toBeVisible();
+  if (action === "duplicate") await expect(page.getByRole("status").filter({ hasText: "outcome uncertain" })).toBeVisible();
   else {
     await expect(form(page)).toHaveCount(0);
     await expect(page.getByText(/acknowledgement is uncertain/)).toHaveCount(0);
-    await expect(page.getByRole("article", { name: "Accepted fact", exact: true })).toHaveCount(0);
+    await expect(accepted(page)).toHaveCount(0);
   }
   expect(posts).toBe(1);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length, document.cookie])).toEqual([0, 0, ""]);

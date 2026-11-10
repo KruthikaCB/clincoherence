@@ -8,10 +8,11 @@ import {
 import ClinicalHistory from "./clinical-history";
 import VerifiedRecords from "./verified-records";
 import PatientSelector, { ApiError, exact, request, useDashboardTask, uuid } from "./patient-selector";
-import { decodeRecordQuestion } from "./record-questions";
+import { decodeRecordQuestion, ProvenanceDetails } from "./record-questions";
 import InvitationPanel from "./invitation-panel";
 import ConsentPanel from "./consent-panel";
 import { FactSummary } from "./fact-card";
+import type { SyntheticProvenance } from "./synthetic-provenance";
 
 // ─── Icons ─────────────────────────────────────────────────────────────────────
 function IcoHeart() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>; }
@@ -41,13 +42,13 @@ function message(error: unknown): string {
   return "Request could not be completed. Refresh server state before retrying.";
 }
 
-type RecordAnswer = { text: string; kind: "result" | "notice" | "error" };
+type RecordAnswer = { text: string; kind: "result" | "notice" | "error"; provenance?: SyntheticProvenance[] };
 type Turn = { id: string; text?: string; question?: string; answer?: RecordAnswer };
 type Profile = { role: Account["role"]; profile_id: string };
 type PanelView = "chat" | "history" | "medications" | "consent" | "invitations" | "verified";
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────────
-function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient, onAddPatient, activePanel, onPanel, onSignOut, canAdd }: {
+function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient, onAddPatient, activePanel, onPanel, onSignOut, onRefreshPatients, canAdd }: {
   session: { account: Account } | null;
   patients: string[];
   demoLabels: Record<string, string>;
@@ -57,6 +58,7 @@ function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient
   activePanel: PanelView;
   onPanel: (v: PanelView) => void;
   onSignOut: () => void;
+  onRefreshPatients: () => void;
   canAdd: boolean;
 }) {
   const role = session?.account.role ?? "practitioner";
@@ -98,6 +100,7 @@ function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient
               </div>
               <div className="cc-sidebar-section" style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
                 <div className="cc-sidebar-heading">Patients</div>
+                <button className="cc-btn cc-btn-ghost cc-btn-xs" onClick={onRefreshPatients}>Refresh patients</button>
                 {patients.map(id => (
                   <button key={id} className={`cc-sidebar-patient ${activePatient === id ? "active" : ""}`} onClick={() => onSelectPatient(id)} title={id}>
                     <span style={{ opacity: 0.6, flexShrink: 0 }}><IcoUser /></span>
@@ -180,9 +183,10 @@ function ProposalCard({ proposal, busy, onDecision }: {
   proposal: Proposal; busy: boolean; onDecision: (id: string, action: "confirm" | "reject") => void;
 }) {
   return (
-    <div className="cc-proposal" aria-label="Extracted fact" aria-busy={busy}>
+    <div className="cc-proposal" role="article" aria-label="Extracted fact" aria-busy={busy}>
       <div className="cc-proposal-header">
         <span className="cc-proposal-kind">{proposal.proposed_fact.kind}</span>
+        <span style={{ fontSize: "0.72rem" }}>{proposal.attribution === "patient_reported" ? "Patient-reported" : "Practitioner-managed"}</span>
         <span className={`cc-proposal-status ${proposal.status}`}>{proposal.status}</span>
       </div>
       <div className="cc-proposal-body">
@@ -455,7 +459,7 @@ export default function Conversation() {
 
   const selectPatient = useCallback((id: string) => {
     if (!session || !profile) return;
-    resetContext();
+    resetContext(); setShowAddPatient(false);
     if (!id) return;
     if (!uuid.test(id) || (session.account.role === "patient" && id !== profile.profile_id)) { fail(new ApiError(403)); return; }
     const ticket = epoch.current;
@@ -472,8 +476,8 @@ export default function Conversation() {
 
   async function refresh(historyChanged = false) {
     if (!session || !patient || !start()) return;
+    cancelRequests(); clearRecord(); setContextVersion(v => v + 1);
     const ticket = epoch.current;
-    setProposals([]); setAccepted([]); setHistoryFocus(null);
     try {
       await load(patient, session, ticket, context.current.signal);
       if (historyChanged && ticket === epoch.current) setNotice("Clinical record changed; accepted records refreshed.");
@@ -487,6 +491,8 @@ export default function Conversation() {
     let acknowledgement = "uncertain";
     let validInput = false;
     setHistoryFocus(null);
+    setTurns(previous => previous.filter(turn => !turn.question));
+    setContextVersion(v => v + 1);
     try {
       const current = accepted.find(row => row.fact_id === fact.fact_id);
       const payload = correctionRequest(input);
@@ -596,7 +602,7 @@ export default function Conversation() {
           </div>
           <h2>Sign in</h2>
           <div className="cc-login-sub">Use an existing synthetic practitioner or patient account.</div>
-          {error && <div className="cc-banner error" style={{ marginBottom: "1rem" }} role="alert">{error}</div>}
+          {error && <div className="cc-banner error" style={{ marginBottom: "1rem" }} role="alert" aria-label="Request error">{error}</div>}
           <form onSubmit={login} aria-busy={busy}>
             <label className="cc-label" style={{ marginBottom: "0.75rem" }}>
               Account identity
@@ -634,6 +640,7 @@ export default function Conversation() {
         activePanel={activePanel}
         onPanel={v => { setActivePanel(v); setShowAddPatient(false); }}
         onSignOut={() => { resetContext(); setSession(null); setProfile(null); setPatientList([]); setDemoLabels({}); setCanAdd(false); }}
+        onRefreshPatients={() => { resetContext(); setPatientList([]); setDemoLabels({}); void loadPatientList(session.token, context.current.signal); }}
         canAdd={canAdd}
       />
 
@@ -648,7 +655,7 @@ export default function Conversation() {
 
         {/* Banners */}
         {error && (
-          <div className="cc-banner error" role="alert" style={{ margin: "0.75rem 1.25rem 0", flexShrink: 0 }}>
+          <div className="cc-banner error" role="alert" aria-label="Request error" style={{ margin: "0.75rem 1.25rem 0", flexShrink: 0 }}>
             {error}
             <button className="cc-btn cc-btn-xs cc-btn-ghost" style={{ marginLeft: "auto" }} onClick={() => setError("")}>Dismiss</button>
           </div>
@@ -667,7 +674,7 @@ export default function Conversation() {
               <div className="cc-chat-scroll">
                 <AddPatientPanel
                   token={session.token}
-                  onDone={() => setShowAddPatient(false)}
+                  onDone={() => { setShowAddPatient(false); void loadPatientList(session.token, context.current.signal); }}
                   onSelect={id => {
                     setPatientList(prev => Array.from(new Set([...prev, id])));
                     selectPatient(id);
@@ -684,7 +691,7 @@ export default function Conversation() {
               {activePanel === "consent" && (
                 <div className="cc-chat-col">
                   <div className="cc-chat-scroll">
-                    <ConsentPanel key={contextVersion} token={session.token} onDenied={onDenied} onMutation={clearClinical} />
+                    <ConsentPanel key={session.account.id} token={session.token} onDenied={onDenied} onMutation={clearClinical} />
                   </div>
                 </div>
               )}
@@ -893,6 +900,7 @@ function ChatArea({ turns, proposals, busy, onDecision, inputTab, chatEndRef }: 
             role={turn.answer?.kind === "error" ? "alert" : "status"}>
             <strong className="cc-assistant-label">{turn.answer?.kind === "result" ? "Verified record response" : "Assistant"}</strong>
             {turn.answer ? turn.answer.text : <><Spinner /> Checking accepted records…</>}
+            {turn.answer?.provenance?.map(p => <ProvenanceDetails key={p.claim_id} provenance={p} />)}
           </div>
         </div>
       ) : (
@@ -992,6 +1000,7 @@ function RecordQuestionsInput({ token, patient, onDenied, previousQuestions, onQ
   onAnswer: (id: string, answer: RecordAnswer) => void;
 }) {
   const [question, setQuestion] = useState("");
+  const [evidence, setEvidence] = useState(false);
   const pendingQuestion = useRef<string | null>(null);
   const { begin, busy } = useDashboardTask();
   useEffect(() => () => {
@@ -1011,9 +1020,10 @@ function RecordQuestionsInput({ token, patient, onDenied, previousQuestions, onQ
     try {
       const result = decodeRecordQuestion(await request<unknown>(`/patients/${patient}/record-questions`, token,
         { question: asked, operation_id: operationId,
-          ...(previousQuestions.length ? { previous_questions: previousQuestions } : {}) }, task.signal, 310000), false);
+          ...(evidence ? { include_synthetic_provenance: true } : {}),
+          ...(previousQuestions.length ? { previous_questions: previousQuestions } : {}) }, task.signal, 310000), evidence);
       if (!task.current() || task.signal.aborted) return;
-      onAnswer(operationId, result.records.length ? { text: result.records.map(r => r.text).join("\n\n"), kind: "result" }
+      onAnswer(operationId, result.records.length ? { text: result.records.map(r => r.text).join("\n\n"), kind: "result", provenance: result.provenance }
         : { text: result.notice, kind: "notice" });
     } catch (cause) {
       if (!task.current() || task.signal.aborted) return;
@@ -1045,6 +1055,7 @@ function RecordQuestionsInput({ token, patient, onDenied, previousQuestions, onQ
           </button>
         </div>
       </form>
+      <label style={{ fontSize: "0.72rem" }}><input type="checkbox" checked={evidence} disabled={busy} onChange={e => setEvidence(e.target.checked)} /> Include synthetic demonstration provenance</label>
       <div className="cc-input-hint">
         Ask naturally and follow up about the same patient. Answers use verified accepted records, not medical advice or treatment recommendations.
       </div>
