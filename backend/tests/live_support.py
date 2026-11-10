@@ -328,7 +328,8 @@ async def observe(run: Run, operation: UUID, digest: str) -> dict[str, object]:
             rows = (
                 await connection.execute(
                     text(
-                        "SELECT a.gate_decision, r.body_digest FROM verification_audit_events a "
+                        "SELECT a.gate_decision, r.body_digest, r.representation_version "
+                        "FROM verification_audit_events a "
                         "LEFT JOIN response_release_intents r ON r.evaluation_event_id = a.id "
                         "WHERE a.operation_id = :operation"
                     ),
@@ -340,6 +341,8 @@ async def observe(run: Run, operation: UUID, digest: str) -> dict[str, object]:
                 "intents": sum(row.body_digest is not None for row in rows),
                 "pass": len(rows) == 1 and rows[0].gate_decision == "PASS",
                 "digest_matches": len(rows) == 1 and rows[0].body_digest == digest,
+                "evidence_representation": len(rows) == 1
+                and rows[0].representation_version == "record-evidence-json-v2",
             }
     finally:
         await engine.dispose()

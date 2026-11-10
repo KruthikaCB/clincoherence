@@ -3,6 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.engine import make_url
@@ -11,6 +12,81 @@ from tests import live_app
 from tests import live_support as live
 
 SAFE = "postgresql+asyncpg://fixture:placeholder@127.0.0.1:5432/clincoherence_db_test"
+
+
+@pytest.mark.parametrize("representation", ["record-response-json-v1", "record-evidence-json-v2"])
+async def test_observer_reports_representation_boolean_only_after_owned_read(
+    monkeypatch, run, representation
+):
+    operation, digest = uuid4(), "c" * 64
+    connection, engine = connection_engine(live.DATABASE, (run.schema, run.marker, True))
+    verified = AsyncMock()
+    row = SimpleNamespace(
+        gate_decision="PASS", body_digest=digest, representation_version=representation
+    )
+    result_rows = Mock()
+    result_rows.all.return_value = [row]
+    connection.execute.return_value = result_rows
+    monkeypatch.setattr(live, "isolated_engine", Mock(return_value=engine))
+    monkeypatch.setattr(live, "verify_connection", verified)
+    result = await live.observe(run, operation, digest)
+    assert result == {
+        "events": 1,
+        "intents": 1,
+        "pass": True,
+        "digest_matches": True,
+        "evidence_representation": representation == "record-evidence-json-v2",
+    }
+    verified.assert_awaited_once_with(connection, run, owned=True)
+    calls = connection.execute.call_args_list
+    assert str(calls[0].args[0]) == "SET TRANSACTION READ ONLY"
+    assert "r.representation_version" in str(calls[1].args[0])
+    assert "WHERE a.operation_id = :operation" in str(calls[1].args[0])
+    assert calls[1].args[1] == {"operation": operation}
+    assert all(str(c.args[0]).startswith(("SET TRANSACTION READ ONLY", "SELECT")) for c in calls)
+    assert set(result.values()) <= {True, False}
+    connection.commit.assert_not_called()
+    engine.dispose.assert_awaited_once()
+
+
+async def test_observer_no_rows_cannot_claim_v2_or_digest(monkeypatch, run):
+    connection, engine = connection_engine(live.DATABASE, (run.schema, run.marker, True))
+    result_rows = Mock()
+    result_rows.all.return_value = []
+    connection.execute.return_value = result_rows
+    monkeypatch.setattr(live, "isolated_engine", Mock(return_value=engine))
+    monkeypatch.setattr(live, "verify_connection", AsyncMock())
+    assert await live.observe(run, uuid4(), "c" * 64) == {
+        "events": 0,
+        "intents": 0,
+        "pass": False,
+        "digest_matches": False,
+        "evidence_representation": False,
+    }
+
+
+def test_migration_0008_remains_in_shared_live_schema_upgrade_chain():
+    from tests.database import migrations
+
+    revisions = migrations()
+    assert revisions[-1].revision == "0008_evidence_release"
+    assert revisions[-1].down_revision == revisions[-2].revision == "0007_response_release_intent"
+
+
+async def test_observer_rejects_ownership_failure_before_event_lookup(monkeypatch, run):
+    connection, engine = connection_engine(live.DATABASE, None)
+    monkeypatch.setattr(live, "isolated_engine", Mock(return_value=engine))
+    monkeypatch.setattr(
+        live,
+        "verify_connection",
+        AsyncMock(side_effect=live.SafetyError("Ownership verification failed")),
+    )
+    with pytest.raises(live.SafetyError):
+        await live.observe(run, uuid4(), "c" * 64)
+    assert connection.execute.await_count == 1
+    assert str(connection.execute.await_args.args[0]) == "SET TRANSACTION READ ONLY"
+    connection.commit.assert_not_called()
+    engine.dispose.assert_awaited_once()
 
 
 @pytest.fixture

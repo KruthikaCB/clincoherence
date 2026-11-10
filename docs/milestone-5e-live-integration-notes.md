@@ -476,6 +476,90 @@ were no PostgreSQL connections, schema operations or guarded live runs. Review
 of the two-file diff found no blocking issue; the added live assertions await
 the user's separate PowerShell run.
 
+## Milestone 7B — Live synthetic evidence provenance validation
+
+Scope: the existing journey, this note, the private read-only observer in
+`backend/tests/live_support.py`, and its non-destructive safety tests. No production
+release contract, feature, migration, catalogue, launcher lifecycle or cleanup
+guard changes. The user confirmed 850 PostgreSQL backend and 172 frontend tests
+after 7A; those results do not establish execution of these new live assertions.
+**The 7B guarded journey remains pending the user's separate approved run.**
+
+The journey now explicitly sets the synthetic-provenance checkbox on every normal
+question submission, keeping all old requests in v1 by default. It verifies exact
+two-field v1 or three-field opt-in request envelopes, fresh operation UUIDs,
+strict v1/v2 response envelopes and exact server-text rendering.
+
+V2 scenarios include:
+
+- Patient-reported original and corrected HbA1c (%) and practitioner-managed HbA1c
+  (%) while each is the unique latest measurement. Responses must reference the
+  expected accepted version, author, attribution and claim; metadata must match
+  the repository's unchanged approved synthetic source, unit, rule and manifest.
+  The manifest hash is independently computed from canonical fixture JSON. Source
+  IDs/versions/edition, unit/locator/hashes, rule and manifest hashes are checked in
+  the actual UI, with the emphatic synthetic/not-guidance disclaimer and no links.
+- Both independently assessed statuses must be RESOLVED and
+  `clinical_support_asserted` must be false. Synthetic applicability is not
+  clinical support, correctness or safety. No evidence content, real guideline,
+  threshold, recommendation or private transcript is introduced.
+- Existing audit/digest checks cover the **entire received v2 body**, including all
+  provenance. Explicit v1 calls before and after v2 must keep the original
+  representation and show no residual provenance. Evidence-mode ties clarify
+  without any record/provenance; medication evidence requests clarify rather
+  than silently falling back to plain record restatements.
+- A correction removes earlier evidence and text; a fresh request identifies the
+  new accepted version. The existing v1 confirmation, history/correction,
+  replay, missing/unsupported question and denial scenarios remain intact.
+- A second-patient synthetic HbA1c fact is created through the ordinary authorized
+  structured-entry API, after its existing empty-state and medication checks.
+  This preserves all first-patient correction/history assumptions. It provides a
+  unique supported measurement for real v2 responses delayed while switching
+  patients and signing out; neither text nor provenance may reappear afterward.
+- After the original first-patient revocation assertions and discovery counts,
+  the second patient independently revokes the practitioner's consent. The
+  practitioner must lose already displayed v2 text/provenance on the next real
+  evidence question, receive an exact generic 403, and display no accepted facts.
+  No consent is automatically restored. Both patients still control their own
+  relationships. All unsaved contexts retain existing storage/cookie checks.
+
+### Migration 0008 and observer coverage
+
+The harness's unchanged schema-bound bootstrap calls `tests.database.migrations()`;
+the list includes `0008_evidence_release` after `0007_response_release_intent`.
+A new offline safety assertion checks that relationship. The bootstrap invokes
+the upgrades in the exact owned schema; it does not stamp an Alembic version table.
+
+The existing private observer's exact-operation SELECT additionally reads the
+stored intent representation. Its only extra output is the boolean
+`evidence_representation`, true for exactly one v2 intent. It retains read-only
+transactions, independent database/schema/ownership verification, bounded queries,
+exact operation filtering and disposal. It returns no representation strings,
+identifiers, source metadata, clinical values, credentials or deletion authority.
+No startup, process ownership, migration execution or final PASS logic changes.
+
+The v2 journey requires one committed intent, PASS audit, exact full-body digest
+match and this stored-v2 boolean. The old 0007 CHECK constraint cannot accept a v2
+intent, so successful guarded execution exercises the widened 0008 representation
+constraint. V1 audit checks require the boolean to be false while still requiring
+the committed intent/digest/PASS. This corroborates migration coverage in the
+isolated schema; it is not proof of browser delivery/reading or clinical validity.
+New mocked observer tests cover v1/v2, missing events and ownership failure before
+event lookup. No database connection or schema operation is used in those tests.
+
+Existing frozen-catalogue deployment limits, lookup-time latest selection,
+transport-race versus database-race distinctions and artifact suppression remain.
+Static checks and ordinary mocked browser tests do not establish a live v2 run.
+
+7B implementation validation: **126 non-destructive harness tests passed, 0 failed,
+0 skipped**; **56 focused mocked frontend tests passed, 0 failed, 0 skipped**
+(record questions, synthetic provenance and clinical corrections). Ruff,
+formatting, configured targeted mypy, ESLint, TypeScript, production build and
+diff checks passed. No new full backend/frontend run was needed; the previously
+confirmed full suites are separate from these focused results. The four-file
+review found no blocking issue. No guarded launcher, PostgreSQL connection,
+migration application, dataset or development/production database was used.
+
 ## Remaining limitations
 
 - Live journey and Windows process supervision still require approved live validation.

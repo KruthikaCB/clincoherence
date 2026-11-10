@@ -2,6 +2,10 @@ import { test, expect, Page, BrowserContext } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { acceptedFact, acceptedHistory, type AcceptedFact, type CorrectionRequest } from "../src/components/clinical-types";
+import type { SyntheticProvenance } from "../src/components/synthetic-provenance";
+import bundle from "../../backend/app/fixtures/evidence/bundle.json";
+import rules from "../../backend/app/fixtures/evidence/rules.json";
+import approvals from "../../backend/app/fixtures/evidence/approvals.json";
 
 // Live network only. No fabricated API responses, saved auth state or diagnostic attachments.
 const origin = "http://127.0.0.1:3010";
@@ -21,22 +25,34 @@ const correctionPath = (fact: AcceptedFact) => `/patients/${fact.patient_id}/fac
 const questions = (page: Page) => page.getByRole("region", { name: "Record questions", exact: true });
 const questionRecords = (page: Page) => page.getByRole("article", { name: "Released question record", exact: true });
 const questionOperations = new Set<string>();
+const releasedProvenance = (page: Page) => page.getByRole("region", { name: "Released synthetic provenance", exact: true });
 
-async function askRecords(page: Page, patientId: string, question: string) {
+function canonicalFixture(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalFixture).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return `{${Object.keys(row).sort().map(k => `${JSON.stringify(k)}:${canonicalFixture(row[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function askRecords(page: Page, patientId: string, question: string, synthetic = false) {
   await questions(page).getByLabel("Record question", { exact: true }).fill(question);
+  await questions(page).getByRole("checkbox", { name: "Include synthetic demonstration provenance", exact: true }).setChecked(synthetic);
   const pending = page.waitForResponse(r => r.url().endsWith(`/patients/${patientId}/record-questions`) && r.request().method() === "POST");
   await questions(page).getByRole("button", { name: "Ask records", exact: true }).click();
   const response = await pending;
-  const input = response.request().postDataJSON() as { question: string; operation_id: string };
-  expect(Object.keys(input).sort()).toEqual(["operation_id", "question"]);
+  const input = response.request().postDataJSON() as { question: string; operation_id: string; include_synthetic_provenance?: true };
+  expect(Object.keys(input).sort()).toEqual(synthetic ? ["include_synthetic_provenance", "operation_id", "question"] : ["operation_id", "question"]);
+  expect(input.include_synthetic_provenance === (synthetic ? true : undefined)).toBe(true);
   expect(input.question === question && /^[0-9a-f-]{36}$/.test(input.operation_id) && !questionOperations.has(input.operation_id)).toBe(true);
   questionOperations.add(input.operation_id);
   if (response.status() === 200) expect(response.headers()["cache-control"]).toBe("no-store");
   return { response, input };
 }
 
-async function questionStatus(page: Page, patientId: string, question: string, reason: string) {
-  const { response } = await askRecords(page, patientId, question);
+async function questionStatus(page: Page, patientId: string, question: string, reason: string, synthetic = false) {
+  const { response } = await askRecords(page, patientId, question, synthetic);
   expect(response.status()).toBe(200);
   const body = await response.json();
   expect(Object.keys(body).sort()).toEqual(["reason_code", "representation_version", "status"]);
@@ -44,15 +60,16 @@ async function questionStatus(page: Page, patientId: string, question: string, r
     body.status === (reason === "CLINICAL_DECISION_UNSUPPORTED" ? "REFUSE" : "CLARIFY")).toBe(true);
   await expect(questions(page).getByRole("status")).toBeVisible();
   await expect(questionRecords(page)).toHaveCount(0);
+  await expect(releasedProvenance(page)).toHaveCount(0);
 }
 
-async function questionRelease(page: Page, patientId: string, question: string, facts: AcceptedFact[], audit = false) {
-  const { response, input } = await askRecords(page, patientId, question);
+async function questionRelease(page: Page, patientId: string, question: string, facts: AcceptedFact[], audit = false, synthetic = false) {
+  const { response, input } = await askRecords(page, patientId, question, synthetic);
   expect(response.status()).toBe(200);
   const bytes = await response.body();
-  const body = JSON.parse(bytes.toString()) as { representation_version: string; records: { claim_id: string; text: string }[] };
-  expect(Object.keys(body).sort()).toEqual(["records", "representation_version"]);
-  expect(body.representation_version === "record-response-json-v1" && body.records.length === facts.length).toBe(true);
+  const body = JSON.parse(bytes.toString()) as { representation_version: string; records: { claim_id: string; text: string }[]; provenance?: SyntheticProvenance[] };
+  expect(Object.keys(body).sort()).toEqual(synthetic ? ["provenance", "records", "representation_version"] : ["records", "representation_version"]);
+  expect(body.representation_version === (synthetic ? "record-evidence-json-v2" : "record-response-json-v1") && body.records.length === facts.length).toBe(true);
   expect(new Set(body.records.map(r => r.claim_id)).size === facts.length).toBe(true);
   for (const row of body.records) {
     expect(Object.keys(row).sort()).toEqual(["claim_id", "text"]);
@@ -66,6 +83,30 @@ async function questionRelease(page: Page, patientId: string, question: string, 
     const rendered = questionRecords(page).filter({ hasText: row.text });
     expect(await rendered.locator("p").textContent() === row.text).toBe(true);
   }
+  if (synthetic) {
+    expect(body.provenance?.length === facts.length && facts.length === 1).toBe(true);
+    const p = body.provenance![0], fact = facts[0];
+    const ruleId = fact.attribution === "patient_reported" ? "synthetic-patient-lab-context" : "synthetic-practitioner-lab-context";
+    const rule = rules.rules.find(r => r.rule_id === ruleId)!;
+    expect(Object.keys(p).sort()).toEqual(["applicability_status", "approval_manifest_hash", "approval_manifest_id", "approval_manifest_version", "claim_id", "clinical_support_asserted", "evidence", "fact_version_ids", "integrity_status", "intended_use", "label", "locator", "rule_content_hash", "rule_id", "rule_version", "source"]);
+    expect(p.claim_id === body.records[0].claim_id && p.fact_version_ids.length === 1 && p.fact_version_ids[0] === fact.version_id).toBe(true);
+    expect(p.label === "SYNTHETIC_FIXTURE_ONLY" && p.clinical_support_asserted === false && p.integrity_status === "RESOLVED" && p.applicability_status === "RESOLVED").toBe(true);
+    expect(p.source).toEqual(bundle.sources[0]);
+    expect(p.evidence).toEqual(rule.evidence[0]);
+    expect(p.locator === bundle.units[0].locator && p.rule_id === ruleId && p.rule_version === rule.version && p.rule_content_hash === rule.content_hash && p.intended_use === "synthetic-context-testing").toBe(true);
+    const manifestHash = createHash("sha256").update(canonicalFixture(approvals)).digest("hex");
+    expect(p.approval_manifest_id === approvals.manifest_id && p.approval_manifest_version === approvals.version && p.approval_manifest_hash === manifestHash).toBe(true);
+    await expect(releasedProvenance(page)).toHaveCount(1);
+    await expect(releasedProvenance(page)).toContainText("SYNTHETIC DEMONSTRATION DATA — NOT CLINICAL GUIDANCE");
+    await expect(releasedProvenance(page)).toContainText("Neither establishes clinical correctness or clinical support");
+    for (const text of [p.source.title, p.source.publisher, p.evidence.source_id, p.evidence.source_version,
+      p.evidence.source_edition, p.evidence.source_content_hash, p.evidence.unit_id, p.evidence.unit_version,
+      p.evidence.unit_content_hash, p.locator, p.rule_id, p.rule_version, p.rule_content_hash,
+      p.approval_manifest_id, p.approval_manifest_version, p.approval_manifest_hash, fact.version_id]) {
+      expect((await releasedProvenance(page).textContent())?.includes(text)).toBe(true);
+    }
+    await expect(releasedProvenance(page).getByRole("link")).toHaveCount(0);
+  } else await expect(releasedProvenance(page)).toHaveCount(0);
   if (audit) {
     const digest = createHash("sha256").update(bytes).digest("hex");
     const observer = spawnSync(setting("CC_LIVE_PYTHON"), [
@@ -74,11 +115,12 @@ async function questionRelease(page: Page, patientId: string, question: string, 
     expect(observer.status === 0).toBe(true);
     const metadata = JSON.parse(observer.stdout);
     expect(metadata.events === 1 && metadata.intents === 1 && metadata.pass && metadata.digest_matches).toBe(true);
+    expect(metadata.evidence_representation === synthetic).toBe(true);
   }
   return { input, body };
 }
 
-async function delayedQuestionContext(page: Page, patientId: string, changeContext: () => Promise<void>) {
+async function delayedQuestionContext(page: Page, patientId: string, changeContext: () => Promise<void>, synthetic = false) {
   const path = `**/patients/${patientId}/record-questions`;
   let entered!: () => void, release!: () => void, finished!: () => void;
   const started = new Promise<void>(r => { entered = r; });
@@ -90,18 +132,24 @@ async function delayedQuestionContext(page: Page, patientId: string, changeConte
     let actual: Awaited<ReturnType<typeof route.fetch>> | undefined;
     try {
       actual = await route.fetch({ maxRetries: 0 });
-      available = actual.status() === 200;
+      if (synthetic) {
+        const body: unknown = await actual.json();
+        available = actual.status() === 200 && body !== null && typeof body === "object" &&
+          "representation_version" in body && body.representation_version === "record-evidence-json-v2";
+      } else available = actual.status() === 200;
       entered(); await gate;
       await route.fulfill({ response: actual }); // Real authorized bytes only; no fabricated response.
     } catch { entered(); } // Context cancellation is expected; no raw diagnostics.
     finally { try { await actual?.dispose(); } catch { available = false; } finally { finished(); } }
   });
   try {
-    await questions(page).getByLabel("Record question", { exact: true }).fill("What confirmed clinical information is recorded?");
+    await questions(page).getByLabel("Record question", { exact: true }).fill(synthetic ? "What is my latest recorded hba1c?" : "What confirmed clinical information is recorded?");
+    await questions(page).getByRole("checkbox", { name: "Include synthetic demonstration provenance", exact: true }).setChecked(synthetic);
     await questions(page).getByRole("button", { name: "Ask records", exact: true }).click();
     await started; expect(available).toBe(true);
     await changeContext(); release(); await completed; expect(available).toBe(true);
     await expect(questionRecords(page)).toHaveCount(0);
+    await expect(releasedProvenance(page)).toHaveCount(0);
   } finally { release(); if (seen) await completed; await page.unroute(path); }
 }
 
@@ -269,7 +317,7 @@ async function refreshPatients(doctor: Page) {
   await expect(doctor.getByLabel("Select authorized patient")).toBeEnabled();
 }
 
-test("real onboarding, consent, confirmation, history, corrections, record questions, audited release and revocation", async ({ browser }) => {
+test("real onboarding, consent, confirmation, history, corrections, v1/v2 record questions, audited release and revocation", async ({ browser }) => {
   test.setTimeout(300_000); // Still bounded below the unchanged launcher's 600-second browser deadline.
   const contexts: BrowserContext[] = [];
   const newContext = async () => {
@@ -327,6 +375,7 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
     const originalPatientFact = acceptedFact(originalFacts.body[0], first.patient_id);
     const originalQuestion = await questionRelease(patient, first.patient_id, "What is my latest recorded value for hba1c?", [originalPatientFact]);
     expect(originalQuestion.body.records[0].text.includes('"value":"7.1"') && originalQuestion.body.records[0].text.includes('"unit":"%"')).toBe(true);
+    const originalEvidence = await questionRelease(patient, first.patient_id, "What is my latest recorded value for hba1c?", [originalPatientFact], true, true);
     expect(originalPatientFact.attribution === "patient_reported" && originalPatientFact.entry_method === "LLM_EXTRACTED").toBe(true);
     const originalHistory = await openHistory(patient, originalPatientFact);
     expect(originalHistory.length === 1 && originalHistory[0].confirmed_by_id === originalPatientFact.author_id).toBe(true);
@@ -340,11 +389,15 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
     let patientFact = await submitCorrection(patient, originalPatientFact, patientPayload);
     await expect(patient.getByRole("article", { name: "Server-released record", exact: true })).toHaveCount(0);
     await expect(questionRecords(patient)).toHaveCount(0);
+    await expect(releasedProvenance(patient)).toHaveCount(0);
     const patientHistory = await openHistory(patient, patientFact);
     expect(patientHistory.length === 2 && JSON.stringify(patientHistory[0]) === JSON.stringify(originalHistory[0])).toBe(true);
     await expect(history(patient)).toContainText(`Version ${originalPatientFact.version} — Superseded`);
     const patientQuestion = await questionRelease(patient, first.patient_id, "What is my latest recorded value for hba1c?", [patientFact], true);
     expect(patientQuestion.body.records[0].text.includes('"value":"7.2"')).toBe(true); // Renderer normalizes decimals, not JS arithmetic.
+    const correctedEvidence = await questionRelease(patient, first.patient_id, "What is my latest recorded hba1c?", [patientFact], true, true);
+    expect(correctedEvidence.body.provenance![0].fact_version_ids[0] !== originalEvidence.body.provenance![0].fact_version_ids[0]).toBe(true);
+    await questionRelease(patient, first.patient_id, "What is my latest recorded hba1c?", [patientFact], true); // Explicit v1 after v2.
     const questionReplay = await call(patient, `/patients/${first.patient_id}/record-questions`, patientAuth.bearer, patientQuestion.input);
     expect(questionReplay.status === 409 && JSON.stringify(questionReplay.body) === JSON.stringify({ detail: "Audited response unavailable" })).toBe(true);
 
@@ -382,6 +435,7 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
     const doctorFacts = await call(doctor, `/patients/${first.patient_id}/facts`, own.bearer);
     expect(doctorFacts.status).toBe(200);
     let doctorFact = acceptedFact(doctorFacts.body.find((row: AcceptedFact) => row.attribution === "practitioner_managed"), first.patient_id);
+    await questionRelease(doctor, first.patient_id, "What is the latest recorded hba1c?", [doctorFact], true, true);
     await expect(factCard(doctor, patientFact).getByRole("button", { name: "Correct record", exact: true })).toHaveCount(0);
     // Reacquire a real released restatement; extraction itself already invalidated the earlier display.
     const doctorRelease = doctor.waitForResponse(r => r.url().endsWith("/verified-records"));
@@ -392,12 +446,14 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
     const doctorPayload = await prepareCorrection(doctor, doctorFact, "6.9000000000", "Synthetic practitioner correction");
     doctorFact = await submitCorrection(doctor, doctorFact, doctorPayload);
     await expect(doctor.getByRole("article", { name: "Server-released record", exact: true })).toHaveCount(0);
+    await expect(releasedProvenance(doctor)).toHaveCount(0);
     const doctorHistory = await openHistory(doctor, doctorFact);
     expect(doctorHistory.length === 2 && doctorHistory[0].version_id === doctorOriginal.version_id &&
       doctorHistory[0].author_id === doctorOriginal.author_id && doctorHistory[0].provenance.source === doctorOriginal.provenance.source).toBe(true);
     await expect(history(doctor)).toContainText(`Version ${doctorOriginal.version} — Superseded`);
     // Both corrections use the same observation instant: never silently choose an attribution.
     await questionStatus(doctor, first.patient_id, "What is my latest recorded hba1c?", "LATEST_AMBIGUOUS");
+    await questionStatus(doctor, first.patient_id, "What is my latest recorded hba1c?", "LATEST_AMBIGUOUS", true);
     const clinicalQuestion = await questionRelease(doctor, first.patient_id, "What confirmed clinical information is recorded?", [patientFact, doctorFact], true);
     expect(clinicalQuestion.body.records.every(r => !r.text.includes('"code":"glucose"'))).toBe(true);
 
@@ -522,6 +578,20 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
       medicationQuestion.body.records.every(r => !r.text.includes(first.patient_id) && !r.text.includes(patientFact.version_id))).toBe(true);
     await expect(questions(other)).toContainText("Recorded medications do not establish what is currently being taken");
     await questionRelease(doctor, second.patient_id, "What medications are recorded?", [medicationFact]);
+    await questionStatus(other, second.patient_id, "What medications are currently recorded?", "SYNTHETIC_CONTEXT_UNSUPPORTED", true);
+    // A unique second-patient HbA1c enables v2 context-race checks without changing first-patient history.
+    const lab = await call(other, `/patients/${second.patient_id}/facts`, otherAuth.bearer, {
+      fact: { kind: "laboratory", code: "hba1c", value: "8.1000000000", unit: "%" },
+      observed_at: "2026-01-18T10:00:00Z",
+      provenance: { source: "Synthetic second-patient HbA1c fixture", reference: null, data_origin: "synthetic" },
+    });
+    expect(lab.status).toBe(201);
+    const secondLab = acceptedFact(lab.body, second.patient_id);
+    await questionRelease(doctor, second.patient_id, "What is the latest recorded hba1c?", [secondLab], true, true);
+    await delayedQuestionContext(doctor, second.patient_id, async () => {
+      await doctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
+      await expect(accepted(doctor)).toHaveCount(2);
+    }, true);
 
     // Switch with an actual open correction draft, before any refresh unmounts it.
     await doctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
@@ -556,6 +626,14 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
     await prepareCorrection(doctor, doctorFact, "6.9500000000", "UNSUBMITTED REVOKED DRAFT");
     // Same eligible practitioner in an independent unsaved session, to test question-specific denial.
     const questionDoctor = await (await newContext()).newPage();
+    await login(questionDoctor, setting("CC_LIVE_DOCTOR"));
+    await questionDoctor.getByLabel("Select authorized patient").selectOption(second.patient_id);
+    await expect(accepted(questionDoctor)).toHaveCount(2);
+    await questionRelease(questionDoctor, second.patient_id, "What is my latest recorded hba1c?", [secondLab], true, true);
+    await delayedQuestionContext(questionDoctor, second.patient_id, async () => {
+      await questionDoctor.getByRole("button", { name: "Sign out", exact: true }).click();
+      await expect(questionDoctor.getByLabel("Password", { exact: true })).toBeVisible();
+    }, true);
     await login(questionDoctor, setting("CC_LIVE_DOCTOR"));
     await questionDoctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
     await expect(accepted(questionDoctor)).toHaveCount(2);
@@ -598,6 +676,20 @@ test("real onboarding, consent, confirmation, history, corrections, record quest
     await refreshPatients(doctor);
     expect(await doctor.getByLabel("Select authorized patient").locator("option").count()).toBe(2);
     expect(await doctor.getByLabel("Select authorized patient").locator(`option[value="${first.patient_id}"]`).count()).toBe(0);
+    // First-patient denial assertions above remain unchanged; independently revoke the second pair for v2.
+    await questionDoctor.getByLabel("Select authorized patient").selectOption(second.patient_id);
+    await expect(accepted(questionDoctor)).toHaveCount(2);
+    const beforeEvidenceRevoke = await questionRelease(questionDoctor, second.patient_id, "What is my latest recorded hba1c?", [secondLab], true, true);
+    await other.getByRole("button", { name: "Review access revocation", exact: true }).click();
+    const revokeEvidence = other.waitForResponse(r => r.url().endsWith(`/${own.profile_id}/revoke`));
+    await other.getByRole("button", { name: "Confirm revoke access", exact: true }).click();
+    expect((await revokeEvidence).status()).toBe(200);
+    const withheldEvidence = await askRecords(questionDoctor, second.patient_id, "What is my latest recorded hba1c?", true);
+    scopeDenied({ status: withheldEvidence.response.status(), body: await withheldEvidence.response.json() }, [beforeEvidenceRevoke.body.records[0].text, secondLab.version_id]);
+    await expect(questionDoctor.getByRole("alert", { name: "Request error", exact: true })).toBeVisible();
+    await expect(releasedProvenance(questionDoctor)).toHaveCount(0);
+    await expect(questionRecords(questionDoctor)).toHaveCount(0);
+    await expect(accepted(questionDoctor)).toHaveCount(0);
     await doctor.getByRole("button", { name: "Sign out", exact: true }).click();
     await expect(doctor.getByLabel("Password", { exact: true })).toBeVisible();
     await expect(accepted(doctor)).toHaveCount(0);
