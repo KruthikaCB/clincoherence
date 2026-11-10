@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import FactCard from "./fact-card";
-import { Account, AcceptedFact, acceptedFacts, Proposal } from "./clinical-types";
+import { Account, AcceptedFact, acceptedFact, acceptedFacts, CorrectionRequest, correctionRequest, Proposal } from "./clinical-types";
 import ClinicalHistory from "./clinical-history";
 import VerifiedRecords from "./verified-records";
 import PatientSelector, { ApiError, exact, request, uuid } from "./patient-selector";
@@ -27,6 +27,7 @@ export default function Conversation() {
   const [patient, setPatient] = useState("");
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [accepted, setAccepted] = useState<AcceptedFact[]>([]);
+  const [historyFocus, setHistoryFocus] = useState<string | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,7 +38,7 @@ export default function Conversation() {
   const epoch = useRef(0);
   const context = useRef(new AbortController());
   const draft = useRef<{ id: string; text: string } | null>(null);
-  const clearRecord = useCallback(() => { setProposals([]); setAccepted([]); setTurns([]); setText(""); draft.current = null; }, []);
+  const clearRecord = useCallback(() => { setProposals([]); setAccepted([]); setHistoryFocus(null); setTurns([]); setText(""); draft.current = null; }, []);
   const cancelRequests = useCallback(() => { epoch.current++; context.current.abort(); context.current = new AbortController(); }, []);
   useEffect(() => cancelRequests, [cancelRequests]);
   const clearClinical = useCallback(() => { cancelRequests(); working.current = false; setBusy(false); clearRecord(); setContextVersion(value => value + 1); }, [cancelRequests, clearRecord]);
@@ -112,13 +113,57 @@ export default function Conversation() {
   async function refresh(historyChanged = false) {
     if (!session || !patient || !start()) return;
     const ticket = epoch.current;
-    setProposals([]); setAccepted([]);
+    setProposals([]); setAccepted([]); setHistoryFocus(null);
     try {
       await load(patient, session, ticket, context.current.signal);
       if (historyChanged && ticket === epoch.current) setNotice("Clinical record changed; current accepted records were refreshed. Open details/history again.");
     }
     catch (cause) { if (ticket === epoch.current) fail(cause); }
     finally { finish(ticket); }
+  }
+  async function correct(fact: AcceptedFact, input: CorrectionRequest) {
+    if (!session || !patient || !start()) return;
+    const ticket = epoch.current, id = patient, active = session, signal = context.current.signal;
+    let acknowledgement = "uncertain";
+    let validInput = false;
+    setHistoryFocus(null);
+    try {
+      const current = accepted.find(row => row.fact_id === fact.fact_id);
+      const payload = correctionRequest(input);
+      const category = active.account.role === "patient" ? "patient_reported" : "practitioner_managed";
+      if (!current || current.patient_id !== id || current.version_id !== payload.expected_version_id || current.attribution !== category) throw new ApiError(403);
+      validInput = true;
+      setAccepted([]); setProposals([]); // Existing Verified Records is unmounted by busy before handoff.
+      try {
+        const value = await request<unknown>(`/patients/${id}/facts/${fact.fact_id}/corrections`, active.token, payload, signal);
+        if (ticket !== epoch.current || signal.aborted) return;
+        const result = acceptedFact(value, id);
+        if (result.fact_id !== fact.fact_id || result.previous_version_id !== payload.expected_version_id || result.version <= current.version || result.version_id === current.version_id || result.author_id !== active.account.id || result.author_role !== active.account.role || result.attribution !== category || result.entry_method !== "STRUCTURED") throw new Error();
+        acknowledgement = "saved";
+      } catch (cause) {
+        if (ticket !== epoch.current || signal.aborted) return;
+        if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) throw cause;
+        if (cause instanceof ApiError && cause.status === 409) acknowledgement = "stale";
+        else if (cause instanceof ApiError && cause.status === 422) acknowledgement = "invalid";
+        // Other errors (including malformed acknowledgements) may follow a committed write.
+      }
+      await load(id, active, ticket, signal); // Read recovery only; never replay the mutation.
+      if (ticket !== epoch.current || signal.aborted) return;
+      setHistoryFocus(fact.fact_id);
+      setNotice(acknowledgement === "saved"
+        ? "Correction acknowledged. Current accepted records and history are being refreshed; prior versions are preserved."
+        : acknowledgement === "stale"
+          ? "Correction was stale (409). Current records were reloaded. Review fresh history and explicitly prepare a new correction."
+          : acknowledgement === "invalid"
+            ? "Correction values were rejected. Current records were reloaded. Review fresh history before a new explicit attempt."
+            : "Correction acknowledgement is uncertain; it may already have been committed. No automatic retry. Review fresh history before any new attempt.");
+    } catch (cause) {
+      if (ticket !== epoch.current || signal.aborted) return;
+      fail(cause);
+      if (validInput) setNotice(acknowledgement === "saved"
+        ? "Correction was acknowledged, but record refresh is unavailable. Reauthorize and check fresh history."
+        : "Correction acknowledgement or refresh is unavailable; the correction may already have been committed. No automatic retry. Reauthorize and check fresh history before any new attempt.");
+    } finally { finish(ticket); }
   }
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!session || !patient || !text.trim() || !start()) return;
@@ -205,7 +250,7 @@ export default function Conversation() {
           </form>
         </section>
         {busy ? <section className="panel" aria-label="Clinical History"><h2>Clinical History</h2><p role="status">Loading accepted clinical records...</p></section>
-          : <ClinicalHistory key={`${session.account.id}:${contextVersion}:${patient}`} token={session.token} patient={patient} facts={accepted} contextSignal={context.current.signal} onDenied={onDenied} onChanged={() => void refresh(true)} />}
+          : <ClinicalHistory key={`${session.account.id}:${contextVersion}:${patient}`} token={session.token} patient={patient} role={session.account.role} facts={accepted} contextSignal={context.current.signal} autoRoot={historyFocus} onDenied={onDenied} onChanged={() => void refresh(true)} onCorrection={(fact, payload) => void correct(fact, payload)} />}
       </div>}
     </>}
   </main>;

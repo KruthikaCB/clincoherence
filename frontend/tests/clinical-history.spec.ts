@@ -78,7 +78,7 @@ test("all T2DM payload types, exact decimals and separate accepted-record sectio
   }
   await expect(page.getByRole("region", { name: "Verified Records", exact: true })).toBeVisible();
   expect(state.requests.filter(r => r.path.endsWith("/history"))).toHaveLength(0);
-  await expect(panel.getByRole("button", { name: /correct|save|delete/i })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /submit new version|save|delete/i })).toHaveCount(0);
 });
 
 for (const role of ["patient", "practitioner"] as const) test(`${role} full provenance and accepted correction chain`, async ({ page }) => {

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { AcceptedFact, acceptedHistory, attribution, sameAcceptedVersion } from "./clinical-types";
+import { useEffect, useRef, useState } from "react";
+import { Account, AcceptedFact, acceptedHistory, attribution, CorrectionRequest, sameAcceptedVersion } from "./clinical-types";
+import CorrectionForm from "./correction-form";
 import { FactDetails } from "./fact-card";
 import { ApiError, request, useDashboardTask } from "./patient-selector";
 
@@ -33,15 +34,19 @@ function VersionDetails({ version, current }: { version: AcceptedFact; current: 
   </article>;
 }
 
-export default function ClinicalHistory({ token, patient, facts, contextSignal, onDenied, onChanged }: {
+export default function ClinicalHistory({ token, patient, role, facts, contextSignal, autoRoot, onDenied, onChanged, onCorrection }: {
   token: string; patient: string; facts: AcceptedFact[];
+  role: Account["role"]; autoRoot: string | null;
   contextSignal: AbortSignal;
   onDenied: (status: number) => void; onChanged: () => void;
+  onCorrection: (fact: AcceptedFact, request: CorrectionRequest) => void;
 }) {
   const [expanded, setExpanded] = useState<{ snapshot: AcceptedFact[]; root: string; versions: AcceptedFact[] } | null>(null);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState<AcceptedFact | null>(null);
   const { begin, busy } = useDashboardTask();
-  async function show(fact: AcceptedFact) {
+  const canCorrect = (fact: AcceptedFact) => fact.attribution === (role === "patient" ? "patient_reported" : "practitioner_managed");
+  async function show(fact: AcceptedFact, edit = false) {
     const task = begin(); if (!task) return;
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -49,7 +54,7 @@ export default function ClinicalHistory({ token, patient, facts, contextSignal, 
     contextSignal.addEventListener("abort", abort, { once: true });
     if (task.signal.aborted || contextSignal.aborted) abort();
     const current = () => task.current() && !controller.signal.aborted;
-    setExpanded(null); setError("");
+    setExpanded(null); setEditing(null); setError("");
     try {
       const value = await request<unknown>(`/patients/${patient}/facts/${fact.fact_id}/history`, token, undefined, controller.signal);
       if (!current()) return;
@@ -62,6 +67,7 @@ export default function ClinicalHistory({ token, patient, facts, contextSignal, 
         onChanged(); return;
       }
       setExpanded({ snapshot: facts, root: fact.fact_id, versions });
+      if (edit && canCorrect(fact)) setEditing(fact);
     } catch (cause) {
       if (!current()) return;
       setExpanded(null);
@@ -73,6 +79,15 @@ export default function ClinicalHistory({ token, patient, facts, contextSignal, 
       task.done();
     }
   }
+  // Effect replays are safe GETs. Writes only come from explicit reviewed form submission.
+  const loader = useRef(show);
+  loader.current = show;
+  useEffect(() => {
+    if (autoRoot) {
+      const fact = facts.find(row => row.fact_id === autoRoot);
+      if (fact) void loader.current(fact);
+    }
+  }, [autoRoot, facts]);
   return <section className="panel" aria-label="Clinical History">
     <h2>Clinical History</h2>
     <p>Current accepted shared records. Pending and rejected proposals remain in your conversation. Acceptance is not medical correctness; technically verified server restatements are shown separately in Verified Records.</p>
@@ -83,9 +98,11 @@ export default function ClinicalHistory({ token, patient, facts, contextSignal, 
       <p>Observed: <time dateTime={fact.observed_at}>{fact.observed_at}</time></p>
       <p>Current accepted version {fact.version}</p>
       <button className="secondary" disabled={busy} onClick={() => void show(fact)} aria-expanded={expanded?.snapshot === facts && expanded.root === fact.fact_id} aria-controls={`history-${fact.fact_id}`}>View details/history</button>
+      {canCorrect(fact) && <button className="secondary" disabled={busy} onClick={() => void show(fact, true)}>Correct record</button>}
     </article>)}
     {busy && <p role="status">Loading clinical history...</p>}
     {error && <p className="error" role="alert" aria-label="Clinical history error">{error}</p>}
+    {editing && expanded?.snapshot === facts && <CorrectionForm key={editing.version_id} current={editing} onSubmit={payload => onCorrection(editing, payload)} onCancel={() => setEditing(null)} />}
     {expanded?.snapshot === facts && <section id={`history-${expanded.root}`} aria-label="Accepted correction history" aria-live="polite">
       <h3>Accepted correction history</h3>
       <button className="secondary" disabled={busy} onClick={() => setExpanded(null)}>Close details/history</button>

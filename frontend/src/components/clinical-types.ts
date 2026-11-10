@@ -22,6 +22,10 @@ export type AcceptedFact = {
   entry_method: "STRUCTURED" | "LLM_EXTRACTED";
   confirmed_by_id: string | null; confirmed_at: string | null;
 };
+export type CorrectionRequest = {
+  fact: Fact; observed_at: string; provenance: AcceptedFact["provenance"];
+  expected_version_id: string; correction_reason: string;
+};
 export function attribution(value: Proposal["attribution"]) {
   return value === "patient_reported" ? "Patient-reported" : "Practitioner-managed";
 }
@@ -138,3 +142,14 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 export function sameAcceptedVersion(a: AcceptedFact, b: AcceptedFact) { return canonical(a) === canonical(b); }
+
+export function correctionRequest(value: unknown): CorrectionRequest {
+  const row = object(value);
+  shape(row, ["fact", "observed_at", "provenance", "expected_version_id", "correction_reason"]);
+  payload(row.fact);
+  if (!timestamp(row.observed_at) || !id(row.expected_version_id) || !text(row.correction_reason)) invalid();
+  const provenance = object(row.provenance);
+  shape(provenance, ["source", "reference", "data_origin"]);
+  if (!text(provenance.source, 200) || !(provenance.reference === null || text(provenance.reference)) || (provenance.data_origin !== "synthetic" && provenance.data_origin !== "de_identified")) invalid();
+  return row as CorrectionRequest;
+}
