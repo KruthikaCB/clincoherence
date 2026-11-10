@@ -43,4 +43,11 @@ async def record_question(
         # Even selection-dependent status metadata retains fresh scope locks through handoff.
         return ClinicalResponse(db, account.id, patient_id, result.model_dump())
     # No verified text, PASS, receipt or bytes supplied: adapter independently checks T1/T2.
-    return AuditedRecordResponse(account.id, patient_id, result, payload.operation_id, factory)
+    return AuditedRecordResponse(
+        account.id,
+        patient_id,
+        result,
+        payload.operation_id,
+        factory,
+        include_provenance=payload.include_synthetic_provenance,
+    )

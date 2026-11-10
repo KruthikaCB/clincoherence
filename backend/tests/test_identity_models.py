@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Index, MetaData, Table, UniqueConstraint, func, select
+from sqlalchemy import CheckConstraint, Index, MetaData, Table, UniqueConstraint, func, select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import configure_mappers
@@ -38,6 +38,17 @@ def test_migration_matches_model_schema(monkeypatch):
         @staticmethod
         def create_unique_constraint(name, table, columns):
             metadata.tables[table].append_constraint(UniqueConstraint(*columns, name=name))
+
+        @staticmethod
+        def drop_constraint(name, table, type_):
+            assert type_ == "check"
+            constraint = next(c for c in metadata.tables[table].constraints if c.name == name)
+            assert isinstance(constraint, CheckConstraint)
+            metadata.tables[table].constraints.remove(constraint)
+
+        @staticmethod
+        def create_check_constraint(name, table, condition):
+            metadata.tables[table].append_constraint(CheckConstraint(condition, name=name))
 
         @staticmethod
         def create_index(name, table, columns, unique=False):

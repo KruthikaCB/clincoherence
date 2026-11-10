@@ -17,7 +17,8 @@ class ResponseReleaseIntent(Base):
             "release_policy_version = 'audited-record-release-v1'", name="ck_release_policy"
         ),
         CheckConstraint(
-            "representation_version = 'record-response-json-v1'", name="ck_release_representation"
+            "representation_version IN ('record-response-json-v1', 'record-evidence-json-v2')",
+            name="ck_release_representation",
         ),
         CheckConstraint("body_digest ~ '^[0-9a-f]{64}$'", name="ck_release_digest"),
     )

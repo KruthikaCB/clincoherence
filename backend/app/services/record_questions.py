@@ -13,10 +13,12 @@ from app.schemas.draft_verification import (
     RestatementContent,
     SourceAttribution,
 )
-from app.schemas.evidence_aware_draft import EvidenceAwareDraftRequest
+from app.schemas.evidence import RuleSelection
+from app.schemas.evidence_aware_draft import ClaimEvidenceBinding, EvidenceAwareDraftRequest
 from app.schemas.record_questions import QuestionStatus, RecordQuestion
 from app.services.consistency import load_accepted_state
 from app.services.consistency_evaluator import ConsistencyInputError, evaluate_consistency
+from app.services.evidence_catalog import load_catalog
 
 ALIASES = {
     "hba1c": "hba1c",
@@ -75,6 +77,8 @@ def build_question(
             if intent == "refuse"
             else "QUESTION_UNSUPPORTED",
         )
+    if payload.include_synthetic_provenance and (intent != "latest" or code != "hba1c"):
+        return QuestionStatus(status="CLARIFY", reason_code="SYNTHETIC_CONTEXT_UNSUPPORTED")
     selected = [
         r
         for r in current
@@ -92,6 +96,10 @@ def build_question(
             return QuestionStatus(status="CLARIFY", reason_code="LATEST_AMBIGUOUS")
     if len(selected) > 32:
         return QuestionStatus(status="CLARIFY", reason_code="TOO_MANY_RECORDS")
+    if payload.include_synthetic_provenance and any(
+        r.fact.kind != "laboratory" or r.fact.unit != "%" for r in selected
+    ):
+        return QuestionStatus(status="CLARIFY", reason_code="SYNTHETIC_CONTEXT_UNSUPPORTED")
     claims = tuple(
         DraftClaim(
             claim_id=uuid5(payload.operation_id, str(r.version_id)),
@@ -107,12 +115,41 @@ def build_question(
         )
         for r in sorted(selected, key=lambda r: (r.observed_at, str(r.version_id)))
     )
+    bindings: tuple[ClaimEvidenceBinding, ...] = ()
+    if payload.include_synthetic_provenance:
+        try:
+            catalog = load_catalog()
+            row = selected[0]
+            rule_id = (
+                "synthetic-patient-lab-context"
+                if row.attribution == "patient_reported"
+                else "synthetic-practitioner-lab-context"
+            )
+            rule = next(
+                r
+                for r in catalog.registry.rules
+                if (r.rule_id, r.version) == (rule_id, "fixture-1")
+            )
+            bindings = (
+                ClaimEvidenceBinding(
+                    claim_id=claims[0].claim_id,
+                    rule=RuleSelection(
+                        rule_id=rule.rule_id, rule_version=rule.version, evidence=rule.evidence
+                    ),
+                    approval_manifest_id=catalog.manifest.manifest_id,
+                    approval_manifest_version=catalog.manifest.version,
+                    intended_use="synthetic-context-testing",
+                ),
+            )
+        except (ValueError, OSError, StopIteration):
+            raise HTTPException(503, "Synthetic evidence unavailable") from None
     return EvidenceAwareDraftRequest(
         draft=DraftVerificationRequest(
             draft_id=uuid5(payload.operation_id, "record-question"),
             patient_id=patient_id,
             claims=claims,
-        )
+        ),
+        bindings=bindings,
     )
 
 

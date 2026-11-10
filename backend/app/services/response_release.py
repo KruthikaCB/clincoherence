@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ResponseReleaseIntent, VerificationAuditEvent
 from app.schemas.evidence_aware_draft import EvidenceAwareDraftRequest
 from app.schemas.response_release import (
+    EVIDENCE_REPRESENTATION,
     RELEASE_POLICY,
     REPRESENTATION,
     RecordResponse,
@@ -22,6 +23,7 @@ from app.schemas.verification_gate import GateDecisionRecord
 from app.services.authorization import authorize_patient_scope
 from app.services.clinical_facts import lock_patient_scope
 from app.services.evidence_aware_evaluator import catalogue_fingerprint
+from app.services.evidence_provenance import evidence_response
 from app.services.verification_audit import (
     get_patient_audit_event,
     project_gate,
@@ -37,10 +39,14 @@ class _Prepared:
     intent: ReleaseIntent | None
 
 
-def encode_records(gate: GateDecisionRecord) -> bytes:
+def encode_records(gate: GateDecisionRecord, *, include_provenance: bool = False) -> bytes:
     if gate.decision != "PASS" or not gate.rendered_records:
         raise HTTPException(409, "Verified response withheld")
-    representation = RecordResponse(records=gate.rendered_records)
+    representation = (
+        evidence_response(gate)
+        if include_provenance
+        else RecordResponse(records=gate.rendered_records)
+    )
     return json.dumps(
         representation.model_dump(mode="json"),
         sort_keys=True,
@@ -76,6 +82,8 @@ async def prepare_release(
     patient_id: UUID,
     request: EvidenceAwareDraftRequest,
     operation_id: UUID,
+    *,
+    include_provenance: bool = False,
 ) -> _Prepared:
     """No commit here; caller is the dedicated transaction-1 orchestrator only."""
     gate = (await evaluate_patient_gate(db, actor_id, patient_id, request)).gate
@@ -94,8 +102,8 @@ async def prepare_release(
     row = ResponseReleaseIntent(
         evaluation_event_id=event.id,
         release_policy_version=RELEASE_POLICY,
-        representation_version=REPRESENTATION,
-        body_digest=body_digest(encode_records(gate)),
+        representation_version=EVIDENCE_REPRESENTATION if include_provenance else REPRESENTATION,
+        body_digest=body_digest(encode_records(gate, include_provenance=include_provenance)),
     )
     db.add(row)
     await db.flush()
@@ -139,6 +147,8 @@ async def revalidate_release(
     patient_id: UUID,
     request: EvidenceAwareDraftRequest,
     prepared: _Prepared,
+    *,
+    include_provenance: bool = False,
 ) -> tuple[bytes, str]:
     """Transaction 2. Private prepared ownership comes only from this invocation."""
     if prepared.intent is None:
@@ -153,7 +163,11 @@ async def revalidate_release(
         or project_gate(gate, actor_id, evaluation.metadata.actor_role) != evaluation.metadata
     ):
         raise HTTPException(409, "Release context changed")
-    body = encode_records(gate)
+    if intent.representation_version != (
+        EVIDENCE_REPRESENTATION if include_provenance else REPRESENTATION
+    ):
+        raise HTTPException(409, "Release representation changed")
+    body = encode_records(gate, include_provenance=include_provenance)
     if body_digest(body) != intent.body_digest:
         raise HTTPException(409, "Release representation changed")
     await authorize_patient_scope(db, actor_id, patient_id)

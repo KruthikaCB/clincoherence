@@ -11,6 +11,7 @@ from app.schemas.consistency import ConsistencySchema
 class RecordQuestion(ConsistencySchema):
     operation_id: UUID
     question: str = Field(strict=True, min_length=1, max_length=500)
+    include_synthetic_provenance: bool = Field(default=False, strict=True)
 
 
 class QuestionStatus(ConsistencySchema):
@@ -22,4 +23,5 @@ class QuestionStatus(ConsistencySchema):
         "NO_MATCHING_RECORDS",
         "LATEST_AMBIGUOUS",
         "TOO_MANY_RECORDS",
+        "SYNTHETIC_CONTEXT_UNSUPPORTED",
     ]

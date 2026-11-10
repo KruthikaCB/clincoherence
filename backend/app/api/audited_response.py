@@ -54,8 +54,12 @@ class AuditedRecordResponse(Response):
         session_factory: Callable[[], AsyncSession],
         *,
         handoff_timeout: float = 5.0,
+        include_provenance: bool = False,
     ) -> None:
         super().__init__(content=b"")  # Its body/headers are NEVER used for sending.
+        if type(include_provenance) is not bool:
+            raise ValueError("Invalid provenance release mode")
+        self._include_provenance = include_provenance
         if (
             isinstance(handoff_timeout, bool)
             or not math.isfinite(handoff_timeout)
@@ -96,8 +100,19 @@ class AuditedRecordResponse(Response):
                 first_session = db
                 try:
                     _require_fresh(db)
-                    prepared = await prepare_release(
-                        db, self._actor, self._patient, self._request, self._operation
+                    prepared = (
+                        await prepare_release(
+                            db,
+                            self._actor,
+                            self._patient,
+                            self._request,
+                            self._operation,
+                            include_provenance=True,
+                        )
+                        if self._include_provenance
+                        else await prepare_release(
+                            db, self._actor, self._patient, self._request, self._operation
+                        )
                     )
                     if disconnected.is_set():
                         raise asyncio.CancelledError()
@@ -114,8 +129,19 @@ class AuditedRecordResponse(Response):
                     _require_fresh(db)
                     if db is first_session:
                         raise HTTPException(503, "Distinct release sessions required")
-                    body, fingerprint = await revalidate_release(
-                        db, self._actor, self._patient, self._request, prepared
+                    body, fingerprint = (
+                        await revalidate_release(
+                            db,
+                            self._actor,
+                            self._patient,
+                            self._request,
+                            prepared,
+                            include_provenance=True,
+                        )
+                        if self._include_provenance
+                        else await revalidate_release(
+                            db, self._actor, self._patient, self._request, prepared
+                        )
                     )
                     identity = await transaction_identity(db)
                     check_lock = asyncio.Lock()
