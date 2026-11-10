@@ -317,6 +317,85 @@ missing/invalid targets and test URLs, read-only exact-target queries, and serve
 database mismatch rejection. These are mocked tests; they do not establish a new
 live integration result or independent cleanup of the earlier run.
 
+## Milestone 5F-D — Clinical History and corrections journey extension
+
+This extension changes only `frontend/live-tests/clinical-journey.spec.ts` and
+this note. No launcher, application code, migrations, database isolation guards,
+process ownership rules, release observer or overall launcher PASS semantics
+change. The existing single serial journey and unsaved browser contexts remain.
+The journey has a 300-second test deadline, below the unchanged 600-second launcher
+browser deadline; worker count, retries and artifact restrictions are unchanged.
+
+Added live assertions, **pending separately approved live execution**:
+
+- Inspect a confirmed patient-reported laboratory fact in Clinical History,
+  including provenance, original-speaker confirmation and metadata-only source
+  references. Pending/rejected proposals remain excluded by the original journey.
+- Correct that fact through explicit UI history loading, review and submission.
+  Reload accepted state and linked history, compare the unchanged original
+  version, and show it as Superseded. Check the new reason, predecessor,
+  provenance, retrospective observation time and exact `7.2000000000` string.
+- Extract and individually confirm a separate practitioner-managed laboratory
+  fact in the practitioner's own conversation, then correct it through the UI.
+  Check exact `6.9000000000`, linked versions, preserved source/author and the
+  opposite category's absence of a Correct record control for each role.
+- Obtain actual Verified Records responses before both corrections; ensure
+  neither prior released display is restored after correction. Original received
+  byte digest/audit-intent observation and deliberate operation replay denial
+  remain in the journey; an intent still does not establish delivery or reading.
+- After patient UI review, submit a competing authorized correction through the
+  same-origin real HTTP API. The stale UI request must receive 409, reload the
+  committed current history, close the editor and issue no automatic second POST.
+- Forward one actual correction POST with `route.fetch({maxRetries: 0})`, check
+  the upstream 201, then abort only its browser acknowledgement. This manufactures
+  no API response or database result. Require the uncertain-acknowledgement notice,
+  fresh accepted/history reads, exactly one new linked version and no write retry
+  through the recovery/check interval. A deliberate fresh history read establishes
+  the committed outcome; no second correction is automatically submitted.
+- Deny cross-patient history reads/writes and outsider practitioner writes using
+  real authentication. Deny a prepared practitioner correction after the patient
+  revokes consent; clear the UI history, accepted records and draft. Also deny
+  subsequent history/write requests with the original authenticated bearer.
+  Require exact generic scope-denial bodies and absence of protected markers.
+- Preserve the delayed-real-facts-response switching scenario. Additionally,
+  switch patients with an open reviewed correction draft, then sign out with
+  another draft open. Require editor/history clearing, no restoration of drafts,
+  and unchanged practitioner history length after signing back in. Existing
+  browser-storage/cookie checks remain.
+
+All synthetic patients still originate from ordinary invitations and activation;
+consent, extraction, individual decisions, writes, history and verified releases
+use the real Next.js rewrite/FastAPI path when the guarded run is later approved.
+Only transport delay/loss is injected; no fabricated JSON, authentication bypass,
+new debug route, database fixture writer or additional harness is introduced.
+The current fixture has one accepted root per attribution category; helper card
+selection deliberately relies on that controlled journey shape.
+
+Validation during 5F-D is non-live: the unchanged harness safety tests use mocks,
+and the ordinary Playwright frontend regression suite uses its existing API mocks.
+TypeScript includes the live test source, but static checking and mocked tests do
+not establish that the extended journey passed against PostgreSQL. The prior
+user-reported successful guarded run predates these assertions. No database
+connection, schema creation/drop, migration, live service or guarded browser suite
+is authorized by this implementation milestone.
+
+5F-D non-live validation: **121 harness safety tests passed, 0 failed, 0 skipped**;
+**140 mocked frontend Playwright tests passed, 0 failed, 0 skipped**. ESLint,
+TypeScript (`--noEmit --incremental false`, including the live journey source),
+production build and `git diff --check` passed. The ordinary mocked tests start
+only their existing Next.js test server. No backend test files changed, so no
+backend lint/type-check changes were required. No guarded live run or PostgreSQL
+connection occurred; the added live assertions have not yet been executed.
+
+Remaining coverage boundaries: the live loss scenario checks an actual committed
+write with a deliberately lost acknowledgement, not every native timeout or
+disconnect timing. The competing write is scheduled deterministically between
+review and submission, not a database stress/race proof. Existing backend locking,
+rollback, revocation, response-release concurrency tests and mocked frontend
+timeout/duplicate-click tests remain necessary. No finite no-retry observation
+proves absence of all future requests. This adds no evidence binding, clinical
+interpretation, medical correctness claim, treatment rule or dataset integration.
+
 ## Remaining limitations
 
 - Live journey and Windows process supervision still require approved live validation.
