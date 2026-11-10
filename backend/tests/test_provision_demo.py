@@ -34,12 +34,13 @@ def test_valid_target():
     demo.validate_target(URL)
 
 
-def test_prompt():
+@pytest.mark.parametrize("password", ["demo1234", "synthetic-password"])
+def test_prompt(password):
     with (
         patch.object(demo.sys.stdin, "isatty", return_value=True),
-        patch.object(demo, "getpass", side_effect=["synthetic-password", "synthetic-password"]),
+        patch.object(demo, "getpass", side_effect=[password, password]),
     ):
-        assert demo.read_password() == "synthetic-password"
+        assert demo.read_password() == password
 
 
 @pytest.mark.parametrize(
@@ -83,6 +84,7 @@ async def test_creates_only_practitioner_with_real_hash():
     assert account.is_active and profile.is_authorized and profile.account is account
     assert account.hashed_password != "synthetic-password"
     assert verify_password("synthetic-password", account.hashed_password)
+    assert "host(inet_server_addr())" in str(session.execute.await_args.args[0])
     session.commit.assert_not_called()
 
 

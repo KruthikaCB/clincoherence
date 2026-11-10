@@ -91,8 +91,8 @@ export default function ActivatePage() {
     if (!/^[a-z0-9][a-z0-9._+-]{0,63}@synthetic\.invalid$/.test(identity)) {
       setError("Use the intended synthetic.invalid identity supplied for this invitation."); return;
     }
-    if (Array.from(password).length < 12 || Array.from(password).length > 1024) {
-      setError("Password must contain 12 to 1024 characters."); return;
+    if (Array.from(password).length < 8 || Array.from(password).length > 1024) {
+      setError("Password must contain 8 to 1024 characters."); return;
     }
     const controller = new AbortController();
     pending.current = controller; setPhase("submitting"); setError("");
@@ -138,7 +138,7 @@ export default function ActivatePage() {
           <label>Separate verification code<input name="verification_code" type="password" required maxLength={128} autoComplete="off" /></label>
           <p>Obtain the verification code separately from the invitation link.</p>
           <label>New password<input name="password" type="password" required maxLength={2048} autoComplete="off" /></label>
-          <p>Use 12 to 1024 characters. Password and code fields are cleared on submission.</p>
+          <p>Use 8 to 1024 characters. Password and code fields are cleared on submission.</p>
           <button>{phase === "submitting" ? "Activating..." : "Activate patient account"}</button>
         </fieldset>
       </form>}

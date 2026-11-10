@@ -34,7 +34,7 @@ UUID shapes, aware parseable timestamps and bounded nonempty notices. Unknown/ma
 responses are not treated as success. Text uses ordinary escaped React rendering.
 
 Local validation restricts identity to the existing `synthetic.invalid` pattern and
-password length to 12–1024 Unicode code points, matching Python length semantics.
+password length to 8–1024 Unicode code points, matching Python length semantics.
 The password input permits up to 2048 UTF-16 code units to accommodate that upper
 bound. The backend remains authoritative for invitation validity, intended identity,
 code matching, expiration, account creation and atomic single-use consumption.

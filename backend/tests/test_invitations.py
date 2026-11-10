@@ -24,7 +24,7 @@ from app.services.invitations import secret_digest
 from tests.test_auth import add_patient, add_practitioner, headers
 
 PATH = "/api/v1/patient-invitations"
-PASSWORD = "synthetic-activation-password"
+PASSWORD = "demo1234"  # Exercise the accepted eight-character boundary.
 
 
 @pytest.fixture(autouse=True)

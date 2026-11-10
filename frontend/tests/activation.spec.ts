@@ -2,7 +2,7 @@ import { test, expect, Page } from "@playwright/test";
 
 const token = "A".repeat(43);
 const code = "C".repeat(32);
-const password = "synthetic-password-only";
+const password = "demo1234";
 const identity = "invited.patient@synthetic.invalid";
 const notice = "Prototype-only synthetic-user identity verification; not production-grade. Deliver the verification code separately from the invitation link. Activation does not grant practitioner consent.";
 const inspected = { valid: true, expires_at: "2099-01-01T10:00:00Z", prototype_notice: notice };
@@ -113,7 +113,7 @@ for (const incorrect of ["identity", "code"]) test(`incorrect ${incorrect} is ge
 for (const value of ["short", "x".repeat(1025)]) test(`password length ${value.length} rejected locally without activation`, async ({ page }) => {
   const calls = await inspect(page);
   await fill(page, { password: value }); await button(page).click();
-  await expect(error(page)).toContainText("12 to 1024 characters");
+  await expect(error(page)).toContainText("8 to 1024 characters");
   expect(calls).toEqual(["/api/v1/patient-invitations/inspect"]);
 });
 

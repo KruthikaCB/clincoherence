@@ -1,7 +1,9 @@
 # Local synthetic practitioner provisioning
 
 This explicit operator command is for the local research development database only.
-There is no registration endpoint or production credential verification. The fixed
+There is no production registration or professional credential verification. An
+explicitly enabled local-only registration UI is documented in
+[development-registration.md](development-registration.md). The CLI's fixed
 login identity is `doctor-demo@synthetic.invalid`. The command creates an active
 practitioner account and an authorized prototype practitioner profile using the
 existing ORM and password hasher. It creates no patient, invitation or consent.
@@ -14,7 +16,7 @@ Set-Location C:\Users\91895\clincoherence\backend
 .\.venv\Scripts\python.exe -B -m app.provision_demo
 ```
 
-Enter and confirm a private password of 12–1024 characters at the hidden prompts.
+Enter and confirm a private password of 8–1024 characters at the hidden prompts.
 Do not put it in command arguments, source files, chat or environment variables.
 Then sign in at http://localhost:3000 using the fixed identity and your password.
 Use the existing invitation/activation workflow to create a synthetic patient;

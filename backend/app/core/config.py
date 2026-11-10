@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     # --- Application ---
     PROJECT_NAME: str = "ClinCoherence"
     API_V1_PREFIX: str = "/api/v1"
+    APP_ENV: str = "production"
+    ENABLE_DEMO_REGISTRATION: bool = False
 
     # --- Database ---
     DATABASE_URL: str = (

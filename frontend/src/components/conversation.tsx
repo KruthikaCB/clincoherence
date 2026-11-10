@@ -207,7 +207,7 @@ export default function Conversation() {
     } finally { finish(ticket); }
   }
   return <main className="workspace">
-    <header><h1>ClinCoherence</h1><p>Synthetic text research prototype - T2DM</p>
+    <header><h1>ClinCoherence</h1><p>Synthetic text research prototype - T2DM</p><p>Practitioner accounts are unverified demo identities, not professionally verified credentials.</p>
       <p>Patient-specific records, supervised AI extraction and technically verified record restatements. No medical advice, diagnosis or prescribing.</p></header>
     {error && <p role="alert" aria-label="Request error" className="error">{error}</p>}
     {notice && <p role="status">{notice}</p>}
@@ -216,7 +216,7 @@ export default function Conversation() {
         <label>Account identity<input name="identity" autoComplete="username" required maxLength={320} /></label>
         <label>Password<input name="password" type="password" autoComplete="current-password" required maxLength={1024} /></label>
         <button disabled={busy}>{busy ? "Signing in..." : "Sign in"}</button>
-      </form></section> : <>
+      </form><p><a href="/register">Create Account</a> — synthetic demo practitioners only. Patients need an invitation.</p></section> : <>
       <section className="panel"><div className="actions"><h2>{session.account.role === "patient" ? "Patient" : "Practitioner"} mode</h2>
         <button className="secondary" onClick={() => { resetContext(); setSession(null); setProfile(null); }}>Sign out</button></div>
         <p>Tokens stay in memory until sign out or reload. Patient-specific content and invitation secrets are cleared on context changes.</p>

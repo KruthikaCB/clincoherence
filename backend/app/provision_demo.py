@@ -1,4 +1,4 @@
-"""Explicit local-development-only practitioner bootstrap; never imported by the API."""
+"""Local-development CLI and guarded demo-registration account creation helper."""
 
 import asyncio
 import sys
@@ -8,6 +8,7 @@ from getpass import GetPassWarning, getpass
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.security import get_password_hash
@@ -41,29 +42,31 @@ def read_password() -> str:
         raise ValueError("Interactive terminal required")
     with warnings.catch_warnings():
         warnings.simplefilter("error", GetPassWarning)
-        password = getpass("Demo practitioner password (12–1024 characters): ")
+        password = getpass("Demo practitioner password (8–1024 characters): ")
         confirmation = getpass("Confirm password: ")
-    if not 12 <= len(password) <= 1024 or password != confirmation:
+    if not 8 <= len(password) <= 1024 or password != confirmation:
         raise ValueError("Password length or confirmation invalid")
     return password
 
 
-async def insert_practitioner(session: AsyncSession, password: str) -> None:
+async def insert_practitioner(
+    session: AsyncSession, password: str, *, identity: str = IDENTITY
+) -> None:
     """Caller owns the transaction. No existing account is ever changed."""
-    if not 12 <= len(password) <= 1024:
+    if not 8 <= len(password) <= 1024:
         raise ValueError("Invalid password length")
     row = (
         await session.execute(
-            text("SELECT current_database(), inet_server_addr()::text, inet_server_port()")
+            text("SELECT current_database(), host(inet_server_addr()), inet_server_port()")
         )
     ).one()
     if row[0] != "clincoherence_db" or row[1] not in {"127.0.0.1", "::1"} or row[2] != 5432:
         raise ValueError("Connected database is not the local development target")
-    if await session.scalar(select(User.id).where(User.identity == IDENTITY)) is not None:
+    if await session.scalar(select(User.id).where(User.identity == identity)) is not None:
         raise ValueError("Demo account already exists; no changes made")
     account = User(
-        identity=IDENTITY,
-        hashed_password=get_password_hash(password),
+        identity=identity,
+        hashed_password=await run_in_threadpool(get_password_hash, password),
         role="practitioner",
         is_active=True,
     )

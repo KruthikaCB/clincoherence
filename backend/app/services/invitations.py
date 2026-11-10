@@ -138,8 +138,8 @@ async def activate_patient(db: AsyncSession, payload: ActivatePatient) -> Patien
     ):
         raise unavailable()
     password = payload.password.get_secret_value()
-    if not 12 <= len(password) <= 1024:
-        raise HTTPException(400, "Password must contain 12 to 1024 characters")
+    if not 8 <= len(password) <= 1024:
+        raise HTTPException(400, "Password must contain 8 to 1024 characters")
     patient = await db.scalar(
         select(PatientProfile)
         .where(
