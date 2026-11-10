@@ -505,3 +505,256 @@ async def test_asgi_identity_wrapper_preserves_send_order_and_exact_body():
     await live_app.IdentityWrapper(app, "a" * 32)({"type": "http"}, receive, send)
     assert sent[1]["body"] is payload
     assert sent[0]["headers"] == [(b"x-clincoherence-live-run", b"a" * 32)]
+
+
+def completed_browser_world(monkeypatch, exit_code=0):
+    """Full launcher control flow; database, subprocesses and readiness remain mocked."""
+    cleanup = prepare_mock_launcher(monkeypatch)
+    registry = live.ProcessRegistry()
+    monkeypatch.setattr(live, "ProcessRegistry", Mock(return_value=registry))
+    jobs = [Mock() for _ in range(3)]
+    roots = [Mock() for _ in range(3)]
+    for root in roots:
+        root.poll.return_value = None
+        root.wait.return_value = 0
+    roots[2].wait.return_value = exit_code
+    monkeypatch.setattr(live, "WindowsJob", Mock(side_effect=jobs))
+    monkeypatch.setattr(live.subprocess, "Popen", Mock(side_effect=roots))
+    monkeypatch.setattr(live, "wait_ready", Mock())
+    monkeypatch.setattr(live.sys, "argv", ["live_support", "run", "--approve-live"])
+    return cleanup, registry, jobs
+
+
+def test_overall_pass_is_after_browser_shutdown_and_committed_cleanup(monkeypatch, capsys):
+    cleanup, registry, jobs = completed_browser_world(monkeypatch)
+    during_cleanup = []
+
+    async def committed(run):
+        assert all(entry.shutdown_confirmed for entry in registry.entries)
+        output = capsys.readouterr().out
+        assert "Browser suite: PASS" in output and "Process shutdown: PASS" in output
+        assert "Schema cleanup: PASS" not in output and "Overall launcher: PASS" not in output
+        during_cleanup.append(output)
+
+    cleanup.side_effect = committed
+    assert live.main() == 0
+    output = "".join(during_cleanup) + capsys.readouterr().out
+    phases = [
+        "Browser suite: PASS",
+        "Process shutdown: PASS",
+        "Schema cleanup: PASS",
+        "Overall launcher: PASS",
+    ]
+    assert [output.index(phase) for phase in phases] == sorted(output.index(p) for p in phases)
+    assert "run_id=" in output and "schema=cc_live_" in output
+    assert registry.entries and all(entry.shutdown_confirmed for entry in registry.entries)
+    cleanup.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("redacted-detail"), TimeoutError(), KeyboardInterrupt(), SystemExit(0)]
+)
+def test_browser_pass_cleanup_failure_never_reports_overall_pass(monkeypatch, capsys, failure):
+    cleanup, registry, jobs = completed_browser_world(monkeypatch)
+    cleanup.side_effect = failure
+    assert live.main() == 1
+    captured = capsys.readouterr()
+    assert "Browser suite: PASS" in captured.out and "Process shutdown: PASS" in captured.out
+    assert "Schema cleanup: PASS" not in captured.out
+    assert "Overall launcher: PASS" not in captured.out + captured.err
+    assert "SCHEMA_CLEANUP_FAILED" in captured.err and "redacted-detail" not in captured.err
+
+
+@pytest.mark.parametrize("failure", [RuntimeError(), KeyboardInterrupt(), SystemExit(0)])
+def test_uncertain_shutdown_skips_schema_cleanup_and_final_pass(monkeypatch, capsys, failure):
+    cleanup, registry, jobs = completed_browser_world(monkeypatch)
+    jobs[0].stop.side_effect = failure
+    assert live.main() == 1
+    cleanup.assert_not_called()
+    captured = capsys.readouterr()
+    assert "Browser suite: PASS" in captured.out
+    assert "SCHEMA_CLEANUP_FAILED" not in captured.err
+    assert "PROCESS_SHUTDOWN_UNCERTAIN" in captured.err
+    assert "SKIPPED" in captured.err and "Overall launcher: PASS" not in captured.out
+
+
+def test_failed_drop_commit_never_produces_schema_or_overall_pass(monkeypatch, capsys):
+    real_cleanup = live.cleanup
+    cleanup, registry, jobs = completed_browser_world(monkeypatch)
+    connections = []
+
+    def engine_for(run):
+        connection, engine = connection_engine(live.DATABASE, (run.schema, run.marker, True))
+        connection.scalar.side_effect = [live.DATABASE, 0]
+        connection.commit.side_effect = RuntimeError("redacted-commit-error")
+        connections.append(connection)
+        return engine
+
+    monkeypatch.setattr(live, "isolated_engine", Mock(side_effect=engine_for))
+    monkeypatch.setattr(live, "cleanup", real_cleanup)
+    assert live.main() == 1
+    assert any("DROP SCHEMA" in str(c.args[0]) for c in connections[0].execute.call_args_list)
+    connections[0].commit.assert_awaited_once()
+    captured = capsys.readouterr()
+    assert "SCHEMA_CLEANUP_FAILED" in captured.err
+    assert "redacted-commit-error" not in captured.err
+    assert "Schema cleanup: PASS" not in captured.out
+    assert "Overall launcher: PASS" not in captured.out
+
+
+def test_browser_failure_still_cleans_up_but_never_prints_overall_pass(monkeypatch, capsys):
+    cleanup, registry, jobs = completed_browser_world(monkeypatch, exit_code=1)
+    assert live.main() == 1
+    cleanup.assert_awaited_once()
+    captured = capsys.readouterr()
+    assert "Browser suite: FAIL" in captured.out and "Schema cleanup: PASS" in captured.out
+    assert "BROWSER_FAILED" in captured.err and "Overall launcher: PASS" not in captured.out
+
+
+@pytest.mark.parametrize(
+    "run_id,schema",
+    [
+        (None, None),
+        ("", None),
+        ("public", None),
+        ("a" * 31, None),
+        (None, "public"),
+        (None, "cc_test_" + "a" * 32),
+        (None, 'cc_live_"; DROP SCHEMA public;--'),
+        ("a" * 32, "cc_live_" + "a" * 32),
+    ],
+)
+async def test_inspection_rejects_missing_or_invalid_target_before_connect(
+    monkeypatch, run_id, schema
+):
+    engine = Mock()
+    monkeypatch.setattr(live, "create_async_engine", engine)
+    with pytest.raises(live.SafetyError):
+        await live.inspect_schema(run_id, schema)
+    engine.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        "malformed",
+        SAFE.replace("_db_test", "_db"),
+        SAFE.replace("asyncpg", "psycopg"),
+        SAFE.replace("127.0.0.1", "remote.invalid"),
+        SAFE.replace("5432", "5433"),
+        SAFE + "?host=remote.invalid",
+    ],
+)
+async def test_inspection_requires_explicit_valid_test_url_without_fallback(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv("TEST_DATABASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("TEST_DATABASE_URL", value)
+    monkeypatch.setenv("DATABASE_URL", SAFE)
+    engine = Mock()
+    monkeypatch.setattr(live, "create_async_engine", engine)
+    with pytest.raises(live.SafetyError):
+        await live.inspect_schema("a" * 32)
+    engine.assert_not_called()
+
+
+@pytest.mark.parametrize("present", [True, False])
+@pytest.mark.parametrize("by_schema", [True, False])
+async def test_inspection_is_read_only_exact_target_and_metadata_only(
+    monkeypatch, run, present, by_schema
+):
+    monkeypatch.setenv("TEST_DATABASE_URL", SAFE)
+    connection, engine = connection_engine(live.DATABASE, None)
+    connection.scalar.side_effect = [live.DATABASE, present]
+    construct = Mock(return_value=engine)
+    monkeypatch.setattr(live, "create_async_engine", construct)
+    result = (
+        await live.inspect_schema(None, run.schema)
+        if by_schema
+        else await live.inspect_schema(run.run_id)
+    )
+    assert result == {
+        "schema": run.schema,
+        "status": "PRESENT" if present else "ABSENT",
+        "read_only": True,
+    }
+    statements = [str(c.args[0]) for c in connection.execute.call_args_list]
+    statements += [str(c.args[0]) for c in connection.scalar.call_args_list]
+    assert all(sql.startswith(("SELECT", "SET TRANSACTION READ ONLY")) for sql in statements)
+    lookup = connection.scalar.call_args
+    assert lookup.args[1] == {"schema": run.schema}
+    assert "nspname = :schema" in str(lookup.args[0]) and "LIKE" not in str(lookup.args[0])
+    options = construct.call_args.kwargs["connect_args"]
+    assert options["server_settings"]["default_transaction_read_only"] == "on"
+    assert options["server_settings"]["search_path"] == "pg_catalog"
+    connection.commit.assert_not_called()
+    engine.dispose.assert_awaited_once()
+    assert run.owner not in str(result) and "placeholder" not in str(result)
+
+
+async def test_inspection_verifies_server_database_before_catalog_lookup(monkeypatch):
+    monkeypatch.setenv("TEST_DATABASE_URL", SAFE)
+    connection, engine = connection_engine("clincoherence_db", None)
+    monkeypatch.setattr(live, "create_async_engine", Mock(return_value=engine))
+    with pytest.raises(live.SafetyError):
+        await live.inspect_schema("a" * 32)
+    assert connection.scalar.await_count == 1
+    connection.commit.assert_not_called()
+    engine.dispose.assert_awaited_once()
+
+
+@pytest.mark.parametrize("status,code", [("ABSENT", 0), ("PRESENT", 1)])
+def test_inspection_cli_reports_only_named_target_without_overall_pass(
+    monkeypatch, capsys, run, status, code
+):
+    result = {"schema": run.schema, "status": status, "read_only": True}
+    inspection = AsyncMock(return_value=result)
+    monkeypatch.setattr(live, "inspect_schema", inspection)
+    monkeypatch.setattr(
+        live.sys, "argv", ["live_support", "inspect-schema", "--run-id", run.run_id]
+    )
+    assert live.main() == code
+    captured = capsys.readouterr()
+    assert "Overall launcher" not in captured.out and status in captured.out
+    inspection.assert_awaited_once_with(run.run_id, None)
+
+
+def test_invalid_inspection_cli_returns_nonzero_without_echoing_target(monkeypatch, capsys):
+    monkeypatch.setattr(live.sys, "argv", ["live_support", "inspect-schema", "--schema", "private"])
+    construct = Mock()
+    monkeypatch.setattr(live, "create_async_engine", construct)
+    assert live.main() == 1
+    construct.assert_not_called()
+    captured = capsys.readouterr()
+    assert "INSPECTION_REJECTED" in captured.err and "private" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("redacted-query-detail"), TimeoutError(), KeyboardInterrupt(), SystemExit(0)],
+)
+def test_inspection_failure_never_asserts_absence_or_exposes_exception(
+    monkeypatch, capsys, run, failure
+):
+    monkeypatch.setattr(live, "inspect_schema", AsyncMock(side_effect=failure))
+    monkeypatch.setattr(
+        live.sys, "argv", ["live_support", "inspect-schema", "--run-id", run.run_id]
+    )
+    assert live.main() == 1
+    captured = capsys.readouterr()
+    assert not captured.out and "INSPECTION_FAILED" in captured.err
+    assert "redacted-query-detail" not in captured.err
+
+
+@pytest.mark.parametrize("result", [None, 0, "false"])
+async def test_inspection_unknown_catalog_result_cannot_be_reported_absent(monkeypatch, result):
+    monkeypatch.setenv("TEST_DATABASE_URL", SAFE)
+    connection, engine = connection_engine(live.DATABASE, None)
+    connection.scalar.side_effect = [live.DATABASE, result]
+    monkeypatch.setattr(live, "create_async_engine", Mock(return_value=engine))
+    with pytest.raises(live.SafetyError, match="Unverifiable"):
+        await live.inspect_schema("a" * 32)
+    connection.commit.assert_not_called()
+    engine.dispose.assert_awaited_once()

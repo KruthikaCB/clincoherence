@@ -16,6 +16,7 @@ import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
+from enum import StrEnum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
@@ -40,6 +41,22 @@ T = TypeVar("T")
 
 class SafetyError(RuntimeError):
     """Only fixed, non-sensitive messages may leave the harness."""
+
+
+class FailureCategory(StrEnum):
+    PROCESS_SHUTDOWN_UNCERTAIN = "PROCESS_SHUTDOWN_UNCERTAIN"
+    SCHEMA_CLEANUP_FAILED = "SCHEMA_CLEANUP_FAILED"
+
+
+class LifecycleError(SafetyError):
+    def __init__(self, category: FailureCategory) -> None:
+        self.category = category
+        message = (
+            "Process shutdown uncertain; owned test schema retained"
+            if category == FailureCategory.PROCESS_SHUTDOWN_UNCERTAIN
+            else "Owned-schema cleanup failed; transaction outcome unconfirmed"
+        )
+        super().__init__(message)
 
 
 def bounded_database_operation(
@@ -135,9 +152,13 @@ def isolated_engine(run: Run) -> AsyncEngine:
     )
 
 
-async def verify_connection(connection: AsyncConnection, run: Run, *, owned: bool) -> None:
+async def verify_database(connection: AsyncConnection) -> None:
     if await connection.scalar(text("SELECT current_database()")) != DATABASE:
         raise SafetyError("Server database verification failed")
+
+
+async def verify_connection(connection: AsyncConnection, run: Run, *, owned: bool) -> None:
+    await verify_database(connection)
     if owned:
         row = (
             await connection.execute(
@@ -177,6 +198,59 @@ async def setup(run: Run) -> None:
 
             await connection.run_sync(upgrade)
             await connection.commit()
+    finally:
+        await engine.dispose()
+
+
+def inspection_target(run_id: str | None, schema: str | None) -> str:
+    """Exactly one explicit run-local identifier; no wildcard or environment target fallback."""
+    if (run_id is None) == (schema is None):
+        raise SafetyError("Exactly one inspection target is required")
+    if run_id is not None:
+        if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+            raise SafetyError("Invalid inspection run identifier")
+        return "cc_live_" + run_id
+    if schema is None or not re.fullmatch(r"cc_live_[0-9a-f]{32}", schema):
+        raise SafetyError("Invalid inspection schema")
+    return schema
+
+
+@bounded_database_operation
+async def inspect_schema(run_id: str | None = None, schema: str | None = None) -> dict[str, object]:
+    """Read one exact catalog target only. Presence grants no ownership or cleanup authority."""
+    target = inspection_target(run_id, schema)
+    url = dedicated_url(os.environ.get("TEST_DATABASE_URL"))
+    engine = create_async_engine(
+        url,
+        hide_parameters=True,
+        connect_args={
+            "timeout": 5,
+            "command_timeout": QUERY_TIMEOUT,
+            "server_settings": {
+                "search_path": "pg_catalog",
+                "default_transaction_read_only": "on",
+                "statement_timeout": str(QUERY_TIMEOUT * 1000),
+                "lock_timeout": "5000",
+            },
+        },
+    )
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SET TRANSACTION READ ONLY"))
+            await verify_database(connection)
+            present = await connection.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = :schema)"
+                ),
+                {"schema": target},
+            )
+            if type(present) is not bool:
+                raise SafetyError("Unverifiable schema inspection result")
+            return {
+                "schema": target,
+                "status": "PRESENT" if present else "ABSENT",
+                "read_only": True,
+            }
     finally:
         await engine.dispose()
 
@@ -537,6 +611,9 @@ def run_live(*, approved: bool) -> int:
     os.environ.update(run.environment())
     registry = ProcessRegistry()
     setup_attempted = False
+    result: int | None = None
+    # Non-secret infrastructure identifiers only; retain these for later exact-target inspection.
+    print(f"Live run: run_id={run.run_id} schema={run.schema}", flush=True)
     try:
         setup_attempted = True
         asyncio.run(setup(run))
@@ -621,12 +698,9 @@ def run_live(*, approved: bool) -> int:
             registry,
         )
         result = browser.wait(timeout=600)
+        print("Browser suite: PASS" if result == 0 else "Browser suite: FAIL", flush=True)
         if backend.poll() is not None or frontend.poll() is not None:
             raise SafetyError("Owned service stopped during live tests")
-        print(
-            "Live browser suite passed" if result == 0 else "Live browser suite failed (redacted)"
-        )
-        return result
     finally:
         # If any tree cannot be stopped, abort cleanup rather than dropping a live schema.
         try:
@@ -634,31 +708,69 @@ def run_live(*, approved: bool) -> int:
         except BaseException:
             # Schema name is random infrastructure metadata, not a credential or patient ID.
             print(
-                f"BLOCKED: process shutdown uncertain; retained schema {run.schema}",
+                f"Process shutdown: FAIL; schema cleanup: SKIPPED; retained schema={run.schema}",
                 file=sys.stderr,
+                flush=True,
             )
-            raise SafetyError("Process shutdown uncertain; owned test schema retained") from None
+            raise LifecycleError(FailureCategory.PROCESS_SHUTDOWN_UNCERTAIN) from None
+        print("Process shutdown: PASS", flush=True)
         if setup_attempted:
-            asyncio.run(cleanup(run))
+            try:
+                asyncio.run(cleanup(run))
+            except BaseException:
+                print(
+                    "Schema cleanup: FAIL; transaction outcome unconfirmed",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                raise LifecycleError(FailureCategory.SCHEMA_CLEANUP_FAILED) from None
+            print("Schema cleanup: PASS (drop commit acknowledged)", flush=True)
+    # Unreachable on any execution, shutdown, cleanup, commit or disposal exception.
+    if result != 0:
+        print("Overall launcher: FAIL [BROWSER_FAILED]", file=sys.stderr, flush=True)
+        return 1
+    print(f"Overall launcher: PASS [run_id={run.run_id} schema={run.schema}]", flush=True)
+    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["run", "observe"])
+    parser.add_argument("command", choices=["run", "observe", "inspect-schema"])
     parser.add_argument("--approve-live", action="store_true")
     parser.add_argument("--operation")
     parser.add_argument("--digest")
+    parser.add_argument("--run-id")
+    parser.add_argument("--schema")
     args = parser.parse_args()
     try:
         if args.command == "run":
             return run_live(approved=args.approve_live)
+        if args.command == "inspect-schema":
+            result = asyncio.run(inspect_schema(args.run_id, args.schema))
+            print(json.dumps(result))
+            return 0 if result["status"] == "ABSENT" else 1
         print(json.dumps(asyncio.run(observe(Run.from_env(), UUID(args.operation), args.digest))))
         return 0
-    except (Exception, KeyboardInterrupt):
+    except BaseException as error:
         # Never echo SQLAlchemy/driver, command-line or browser exceptions.
-        print(
-            "BLOCKED: guarded live operation failed; no diagnostic payload logged", file=sys.stderr
-        )
+        if args.command == "run":
+            category = (
+                error.category.value
+                if isinstance(error, LifecycleError)
+                else "INTERRUPTED"
+                if isinstance(error, (KeyboardInterrupt, SystemExit))
+                else "RUN_TIMEOUT"
+                if isinstance(error, TimeoutError)
+                else "RUN_FAILED"
+            )
+            print(f"Overall launcher: FAIL [{category}]", file=sys.stderr, flush=True)
+        elif args.command == "inspect-schema":
+            category = (
+                "INSPECTION_REJECTED" if isinstance(error, SafetyError) else "INSPECTION_FAILED"
+            )
+            print(f"Schema inspection: FAIL [{category}]", file=sys.stderr, flush=True)
+        else:
+            print("Guarded observation: FAIL [OBSERVATION_FAILED]", file=sys.stderr, flush=True)
         return 1
 
 

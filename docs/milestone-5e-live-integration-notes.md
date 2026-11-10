@@ -19,6 +19,108 @@ Do not execute this command before approval. The flag acknowledges approval; it
 is not a substitute for obtaining it. No bare Alembic or ordinary development
 server command belongs in this workflow.
 
+## Milestone 5E-D — Cleanup observability
+
+The user reported a first successful browser run of the committed 5E-B harness.
+That version printed browser success before its finalizer; the message alone did
+not establish schema cleanup. The changes below apply to future runs. They do not
+retroactively verify the earlier run, and no live run or database connection was
+performed while implementing 5E-D.
+
+Each guarded run prints `Live run: run_id=<32 hex> schema=cc_live_<32 hex>` before
+setup. These are non-secret infrastructure identifiers, not patient identifiers.
+Retain that line for an optional later exact-target inspection. Credentials,
+ownership nonce, signing keys, passwords and clinical data are never included.
+No receipt file or database audit table is added.
+
+Successful completion now emits four distinct phases, in this order:
+
+```text
+Browser suite: PASS
+Process shutdown: PASS
+Schema cleanup: PASS (drop commit acknowledged)
+Overall launcher: PASS [run_id=... schema=...]
+```
+
+Only the final line is overall success. It is reached after Playwright returns
+zero, every registered root/job has confirmed termination, and the owned-schema
+drop transaction has committed and its connection/engine cleanup has returned.
+Capture the native exit status immediately afterward in the same PowerShell:
+
+```powershell
+$liveRunExitCode = $LASTEXITCODE
+Write-Output $liveRunExitCode
+```
+
+Do not infer the original run's exit code after executing unrelated native
+commands. The full run and its exit status are separate from browser assertions.
+
+Failure semantics:
+
+| Situation | Reporting and exit |
+|---|---|
+| Browser test fails; shutdown/cleanup succeed | Browser FAIL, cleanup phases PASS, overall FAIL `[BROWSER_FAILED]`; nonzero |
+| Process termination or registration uncertain | Process FAIL, schema cleanup SKIPPED, overall FAIL `[PROCESS_SHUTDOWN_UNCERTAIN]`; nonzero, no schema deletion |
+| Schema validation/drop/commit/disposal fails or times out | Schema FAIL, outcome unconfirmed, overall FAIL `[SCHEMA_CLEANUP_FAILED]`; nonzero |
+| Other guard/startup/execution failure | Overall FAIL `[RUN_FAILED]`, or `[RUN_TIMEOUT]`; nonzero |
+| Interrupted execution | No overall PASS; nonzero. Shutdown and cleanup guards still apply; fixed phase-specific categories take precedence if they fail |
+
+Errors are reported using fixed categories, never raw driver or subprocess
+exceptions. A failed/uncertain commit is not reported as successful cleanup or as
+proof the schema still exists. Safe shutdown is always attempted first. No hidden
+retry or deletion outside the exact owned schema is added. The private `observe`
+command used by browser tests retains its JSON-only successful output.
+
+### Exact-target read-only inspection
+
+After an authorized run, use the identifier printed by that run and an explicitly
+configured `TEST_DATABASE_URL` in the same PowerShell. This inspection command
+does not require `--approve-live`: it starts no services, executes no live tests,
+and performs no setup or cleanup. Running it still opens a database connection;
+it was not executed during implementation.
+
+From `backend`, choose **one** of these equivalent commands and enter the exact
+non-secret identifier recorded by the launcher:
+
+```powershell
+$recordedRunId = Read-Host 'Recorded 32-hex run ID'
+.\.venv\Scripts\python.exe -B -m tests.live_support inspect-schema --run-id $recordedRunId
+
+# Alternative: use the recorded full schema name instead.
+$recordedSchema = Read-Host 'Recorded cc_live_ schema name'
+.\.venv\Scripts\python.exe -B -m tests.live_support inspect-schema --schema $recordedSchema
+```
+
+Missing, invalid, wildcard, public/development schema names and multiple targets
+are rejected before connecting. There is no target fallback from environment
+variables and no `DATABASE_URL` credential fallback. The existing strict test URL
+driver/host/port/database validation applies. The connected server's database is
+independently verified before the catalog lookup.
+
+The inspector uses startup `default_transaction_read_only=on`, explicitly sets
+its transaction read-only, restricts search path to `pg_catalog`, and executes a
+parameterized exact-name `EXISTS` lookup. No schema lists, ownership comments,
+clinical tables, prompts, transcripts or fact values are queried or returned.
+The existing query/lock/operation deadlines also apply. Output contains only:
+
+```text
+{"schema": "cc_live_<recorded run ID>", "status": "ABSENT", "read_only": true}
+```
+
+`ABSENT` returns exit zero. `PRESENT` returns nonzero and grants no ownership,
+authorization to delete, or proof that a process is still running. Invalid targets
+and configuration return a sanitized `[INSPECTION_REJECTED]` failure; connection,
+query and timeout failures return a sanitized inspection failure without printing
+the supplied target, connection string or exception. Inspection never emits an
+overall launcher PASS.
+
+Absence is a point-in-time statement about the exact supplied name only. It cannot
+prove that a schema was previously created, that it belonged to the claimed run,
+that a browser received/read content, or that all child processes have stopped.
+Use it together with the recorded run metadata and final launcher exit status;
+never guess a target or enumerate other runs. A privileged concurrent database
+owner can recreate objects or bypass protections; existing limitations remain.
+
 Configure `TEST_DATABASE_URL` in the same PowerShell process without displaying it
 or placing credentials in shell history:
 
@@ -197,7 +299,7 @@ Live status remains BLOCKED until explicit approval, a current-process test URL,
 successful guard checks and independent live target/schema verification. No live
 browser or PostgreSQL result is claimed by static/mocked validation.
 
-Implementation validation after lifecycle correction: 80 safety tests passed,
+Historical 5E-B implementation validation after lifecycle correction: 80 safety tests passed,
 0 failed, 0 skipped. Added fault injection covers immediately-after-creation,
 assignment, post-resumption and caller-return failures; incomplete registration;
 uncaptured creation; job/root termination failures; successful confirmed retry;
@@ -207,6 +309,13 @@ formatting, targeted mypy on the two harness modules, frontend lint and TypeScri
 checks passed. No live suite, database connection, schema setup, migration,
 fixture seeding or application-service startup was performed. The existing
 Playwright suite was not rerun because it starts Next.js.
+
+5E-D non-destructive validation: **121 passed, 0 failed, 0 skipped**. Ruff,
+formatting and targeted mypy passed. It extends these tests with ordered final-success
+reporting, browser/cleanup failures, uncertain shutdown, failed drop commits,
+missing/invalid targets and test URLs, read-only exact-target queries, and server
+database mismatch rejection. These are mocked tests; they do not establish a new
+live integration result or independent cleanup of the earlier run.
 
 ## Remaining limitations
 
