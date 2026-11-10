@@ -25,7 +25,7 @@ async function setup(page: Page, role: "patient" | "practitioner", options: { em
     if (path === "/api/v1/patients") return route.fulfill({ json: options.empty ? [] : [{ patient_id: patient }, { patient_id: other }] });
     if (path.endsWith("/confirmations")) return route.fulfill({ json: [] });
     if (path.endsWith("/facts")) return route.fulfill({ json: [{
-      fact_id: consentId, version_id: path.includes(other) ? other : patient, version: 1, previous_version_id: null,
+      fact_id: path.includes(other) ? other : patient, version_id: path.includes(other) ? other : patient, version: 1, previous_version_id: null,
       patient_id: path.includes(other) ? other : patient, author_id: actor, author_role: role,
       attribution: role === "patient" ? "patient_reported" : "practitioner_managed", status: "CONFIRMED",
       observed_at: "2026-01-01T10:00:00Z", entered_at: "2026-01-01T11:00:00Z",

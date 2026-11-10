@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import FactCard, { FactDetails } from "./fact-card";
-import { Account, AcceptedFact, attribution, Proposal } from "./clinical-types";
+import FactCard from "./fact-card";
+import { Account, AcceptedFact, acceptedFacts, Proposal } from "./clinical-types";
+import ClinicalHistory from "./clinical-history";
 import VerifiedRecords from "./verified-records";
 import PatientSelector, { ApiError, exact, request, uuid } from "./patient-selector";
 import InvitationPanel from "./invitation-panel";
@@ -52,13 +53,14 @@ export default function Conversation() {
     // Show neither half of the snapshot if either protected read fails.
     const [items, facts] = await Promise.all([
       request<Proposal[]>(`/patients/${id}/confirmations`, active.token, undefined, signal),
-      request<AcceptedFact[]>(`/patients/${id}/facts`, active.token, undefined, signal),
+      request<unknown>(`/patients/${id}/facts`, active.token, undefined, signal),
     ]);
     if (ticket !== epoch.current || signal.aborted) return;
-    if (!Array.isArray(items) || !Array.isArray(facts) || items.some(p => p.patient_id !== id || p.speaker_id !== active.account.id || p.speaker_role !== active.account.role) || facts.some(f => f.patient_id !== id || f.status !== "CONFIRMED")) {
+    if (!Array.isArray(items) || items.some(p => p.patient_id !== id || p.speaker_id !== active.account.id || p.speaker_role !== active.account.role)) {
       throw new ApiError(403);
     }
-    setProposals(items); setAccepted(facts);
+    const acceptedSnapshot = acceptedFacts(facts, id);
+    setProposals(items); setAccepted(acceptedSnapshot);
     setTurns(previous => {
       const merged = [...previous];
       for (const item of items) if (!merged.some(turn => turn.id === item.source_message_id)) merged.push({ id: item.source_message_id });
@@ -107,11 +109,14 @@ export default function Conversation() {
       finally { if (ticket === epoch.current) { working.current = false; setBusy(false); } }
     })();
   }, [session, profile, resetContext, fail, load]);
-  async function refresh() {
+  async function refresh(historyChanged = false) {
     if (!session || !patient || !start()) return;
     const ticket = epoch.current;
     setProposals([]); setAccepted([]);
-    try { await load(patient, session, ticket, context.current.signal); }
+    try {
+      await load(patient, session, ticket, context.current.signal);
+      if (historyChanged && ticket === epoch.current) setNotice("Clinical record changed; current accepted records were refreshed. Open details/history again.");
+    }
     catch (cause) { if (ticket === epoch.current) fail(cause); }
     finally { finish(ticket); }
   }
@@ -174,7 +179,7 @@ export default function Conversation() {
         {profile?.role === "patient" && !patient && !busy && <button onClick={() => selectPatient(profile.profile_id)}>Open my record</button>}
         {patient && <><p className="break-all">Patient context: {patient}</p><div className="actions">
           {session.account.role === "practitioner" && <button className="secondary" onClick={resetContext}>Change patient context</button>}
-          <button onClick={refresh} disabled={busy}>Refresh server state</button>
+          <button onClick={() => void refresh()} disabled={busy}>Refresh server state</button>
         </div></>}
       </section>
       {profile && <div className="conversation-layout">
@@ -199,13 +204,8 @@ export default function Conversation() {
             <button disabled={busy || !text.trim()}>{busy ? "Working..." : "Send for extraction"}</button>
           </form>
         </section>
-        <section className="panel" aria-label="Accepted longitudinal facts"><h2>Accepted longitudinal facts</h2>
-          <p>Current accepted shared record, loaded separately from proposals. Confirmation does not establish clinical correctness.</p>
-          {!accepted.length && <p>No accepted facts loaded.</p>}
-          {accepted.map(f => <article className="fact-card" key={f.version_id} aria-label="Accepted fact">
-            <strong>{attribution(f.attribution)}</strong><FactDetails fact={f.fact} /><p>Observed: <time dateTime={f.observed_at}>{f.observed_at}</time></p>
-          </article>)}
-        </section>
+        {busy ? <section className="panel" aria-label="Clinical History"><h2>Clinical History</h2><p role="status">Loading accepted clinical records...</p></section>
+          : <ClinicalHistory key={`${session.account.id}:${contextVersion}:${patient}`} token={session.token} patient={patient} facts={accepted} contextSignal={context.current.signal} onDenied={onDenied} onChanged={() => void refresh(true)} />}
       </div>}
     </>}
   </main>;

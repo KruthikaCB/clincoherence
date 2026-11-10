@@ -50,7 +50,7 @@ async function setup(page: Page, options: { conflict?: boolean; denied?: number;
       target.decided_at = "2026-01-04T10:00:00Z";
       if (target.status === "CONFIRMED") {
         target.accepted_version_id = randomUUID();
-        accepted.push({ fact_id: randomUUID(), version_id: target.accepted_version_id, version: 1, previous_version_id: null, patient_id: patient, status: "CONFIRMED", author_id: speaker, author_role: target.speaker_role, fact: target.proposed_fact, attribution: target.attribution, observed_at: target.observed_at,
+        accepted.push({ fact_id: target.accepted_version_id, version_id: target.accepted_version_id, version: 1, previous_version_id: null, patient_id: patient, status: "CONFIRMED", author_id: speaker, author_role: target.speaker_role, fact: target.proposed_fact, attribution: target.attribution, observed_at: target.observed_at,
           entered_at: target.decided_at, correction_reason: null, provenance: { source: "mock-extraction", reference: source, data_origin: "synthetic" }, entry_method: "LLM_EXTRACTED", confirmed_by_id: speaker, confirmed_at: target.decided_at });
       }
       return route.fulfill({ status: options.conflict ? 409 : 200, json: target });

@@ -5,7 +5,7 @@ const other = "22222222-2222-4222-8222-222222222222";
 const actor = "33333333-3333-4333-8333-333333333333";
 const version = "44444444-4444-4444-8444-444444444444";
 const fact = { version_id: version, patient_id: patient, status: "CONFIRMED",
-  fact_id: "66666666-6666-4666-8666-666666666666", version: 1, previous_version_id: null,
+  fact_id: version, version: 1, previous_version_id: null,
   author_id: actor, author_role: "patient", attribution: "patient_reported",
   observed_at: "2026-01-01T10:00:00Z",
   entered_at: "2026-01-01T11:00:00Z", correction_reason: null,
@@ -23,7 +23,7 @@ async function setup(page: Page, practitioner = false, empty = false) {
     if (path === "/api/v1/patients") return route.fulfill({ json: [{ patient_id: patient }, { patient_id: other }] });
     if (path.endsWith("/patients/me/consents")) return route.fulfill({ json: [] });
     if (path.endsWith("/confirmations")) return route.fulfill({ json: [] });
-    if (path.endsWith("/facts")) return route.fulfill({ json: empty ? [] : [{ ...fact, patient_id: path.includes(other) ? other : patient, fact_id: path.includes(other) ? "77777777-7777-4777-8777-777777777777" : fact.fact_id, version_id: path.includes(other) ? "55555555-5555-4555-8555-555555555555" : version }] });
+    if (path.endsWith("/facts")) return route.fulfill({ json: empty ? [] : [{ ...fact, patient_id: path.includes(other) ? other : patient, fact_id: path.includes(other) ? "55555555-5555-4555-8555-555555555555" : fact.fact_id, version_id: path.includes(other) ? "55555555-5555-4555-8555-555555555555" : version }] });
     return route.fulfill({ status: 404, json: {} });
   });
   await page.goto("/");
