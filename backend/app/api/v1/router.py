@@ -12,6 +12,7 @@ from app.api.v1.confirmations import router as confirmation_router
 from app.api.v1.consents import router as consent_router
 from app.api.v1.invitations import router as invitations_router
 from app.api.v1.patient_discovery import router as patient_discovery_router
+from app.api.v1.record_questions import router as record_questions_router
 from app.api.v1.verified_records import router as verified_records_router
 
 api_v1_router = APIRouter()
@@ -22,5 +23,6 @@ api_v1_router.include_router(consent_router)
 api_v1_router.include_router(invitations_router)
 api_v1_router.include_router(patient_discovery_router)
 api_v1_router.include_router(verified_records_router)
+api_v1_router.include_router(record_questions_router)
 
 # Patient-record and conversation routers will be added in later milestones.

@@ -5,6 +5,7 @@ import FactCard from "./fact-card";
 import { Account, AcceptedFact, acceptedFact, acceptedFacts, CorrectionRequest, correctionRequest, Proposal } from "./clinical-types";
 import ClinicalHistory from "./clinical-history";
 import VerifiedRecords from "./verified-records";
+import RecordQuestions from "./record-questions";
 import PatientSelector, { ApiError, exact, request, uuid } from "./patient-selector";
 import InvitationPanel from "./invitation-panel";
 import ConsentPanel from "./consent-panel";
@@ -234,6 +235,7 @@ export default function Conversation() {
         </> : <ConsentPanel token={session.token} onDenied={onDenied} onMutation={clearClinical} />}
       </div>}
       {patient && !busy && <VerifiedRecords key={`${contextVersion}:${patient}`} token={session.token} patient={patient} facts={accepted} onDenied={onDenied} />}
+      {patient && !busy && <RecordQuestions key={`questions:${session.account.id}:${contextVersion}:${patient}`} token={session.token} patient={patient} onDenied={onDenied} />}
       {patient && <div className="conversation-layout">
         <section className="panel" aria-label="Your conversation"><h2>Your conversation</h2>
           <p>Only your own source messages and proposals are shown. Shared record consent does not share transcripts.</p>
