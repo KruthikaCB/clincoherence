@@ -1,4 +1,4 @@
-"""Provider contract and conservative deterministic mock; no network or API keys.
+"""Provider contract, strict deterministic mock and local Ollama selection.
 
 Grounding is deliberately limited to explicit timestamped statement patterns.
 Unsupported natural language yields no proposals, never inferred clinical facts.
@@ -12,6 +12,11 @@ from pydantic import TypeAdapter
 
 from app.core.config import settings
 from app.schemas.extraction import ExtractedCandidate
+from app.services.ollama_extraction import (
+    NATURAL_GROUNDING_VERSION,
+    OllamaExtractionProvider,
+    validate_note_candidate,
+)
 
 GROUNDING_VERSION = "explicit-statements-v1"
 
@@ -99,26 +104,54 @@ class MockExtractionProvider:
 
 
 def extraction_provider() -> ExtractionProvider:
+    if settings.LLM_PROVIDER == "ollama":
+        try:
+            return OllamaExtractionProvider()
+        except ValueError:
+            raise HTTPException(
+                503, "Configure local Ollama and qwen3:0.6b for extraction"
+            ) from None
     if settings.LLM_PROVIDER != "mock":
         raise HTTPException(503, "Extraction provider unavailable")
     return MockExtractionProvider()
 
 
-def validate_candidates(raw: object, text: str) -> list[ExtractedCandidate]:
+def validate_candidates(
+    raw: object, text: str, *, grounding_version: str = GROUNDING_VERSION
+) -> list[ExtractedCandidate]:
+    if grounding_version not in {GROUNDING_VERSION, NATURAL_GROUNDING_VERSION}:
+        raise ValueError("Unsupported grounding version")
     if not isinstance(raw, list) or len(raw) > 32:
         raise ValueError("Invalid extraction batch")
     proposals = TypeAdapter(list[ExtractedCandidate]).validate_python(raw)
-    seen = set()
+    seen: set[object] = set()
+    note_seen: list[ExtractedCandidate] = []
     for proposal in proposals:
         start, end = proposal.source_start, proposal.source_end
         if (
             end > len(text)
             or start >= end
             or text[start:end] != proposal.source_quote
-            or (start > 0 and text[start - 1] not in "\r\n")
-            or (end < len(text) and text[end] not in "\r\n")
+            or (
+                grounding_version == GROUNDING_VERSION
+                and (
+                    (start > 0 and text[start - 1] not in "\r\n")
+                    or (end < len(text) and text[end] not in "\r\n")
+                )
+            )
         ):
             raise ValueError("Unsupported source span")
+        if grounding_version == NATURAL_GROUNDING_VERSION:
+            validate_note_candidate(proposal)
+            if any(
+                previous.source_start == start
+                and previous.source_end == end
+                and previous.fact == proposal.fact
+                for previous in note_seen
+            ):
+                raise ValueError("Duplicate extraction proposal")
+            note_seen.append(proposal)
+            continue
         parsed = statement(proposal.source_quote)
         if parsed is None:
             raise ValueError("Unsupported source statement")

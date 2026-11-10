@@ -135,6 +135,7 @@ def test_empty_ambiguous_and_overflow_do_not_invent_answers():
     assert build_question(PATIENT, payload, [], []).reason_code == "NO_MATCHING_RECORDS"
     rows = [fact(n) for n in range(10, 43)]
     assert build_question(PATIENT, payload, rows, rows).reason_code == "TOO_MANY_RECORDS"
+    rows[1] = fact(11, fact={"kind": "laboratory", "code": "hba1c", "value": "8.2", "unit": "%"})
     assert (
         build_question(
             PATIENT, question("What is my latest recorded hba1c?"), rows, rows

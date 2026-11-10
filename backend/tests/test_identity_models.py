@@ -9,7 +9,16 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import CheckConstraint, Index, MetaData, Table, UniqueConstraint, func, select
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKeyConstraint,
+    Index,
+    MetaData,
+    Table,
+    UniqueConstraint,
+    func,
+    select,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import configure_mappers
@@ -38,6 +47,18 @@ def test_migration_matches_model_schema(monkeypatch):
         @staticmethod
         def create_unique_constraint(name, table, columns):
             metadata.tables[table].append_constraint(UniqueConstraint(*columns, name=name))
+
+        @staticmethod
+        def add_column(table, column):
+            metadata.tables[table].append_column(column)
+
+        @staticmethod
+        def create_foreign_key(name, source, target, local, remote, **kwargs):
+            metadata.tables[source].append_constraint(
+                ForeignKeyConstraint(
+                    local, [f"{target}.{column}" for column in remote], name=name, **kwargs
+                )
+            )
 
         @staticmethod
         def drop_constraint(name, table, type_):

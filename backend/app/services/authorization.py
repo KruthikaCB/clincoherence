@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.demo_patients import verified_database
 from app.models import PatientPractitionerConsent as Consent
 from app.models import PatientProfile, PractitionerProfile, User
 
@@ -71,6 +72,7 @@ async def authorize_patient_scope(db: AsyncSession, account_id: UUID, patient_id
         .join(User, User.id == PatientProfile.account_id)
         .where(
             PatientProfile.id == patient_id,
+            PatientProfile.is_demo.is_(False),
             PatientProfile.account_role == "patient",
             PatientProfile.is_active.is_(True),
             PatientProfile.verified_at.is_not(None),
@@ -101,6 +103,23 @@ async def authorize_patient_scope(db: AsyncSession, account_id: UUID, patient_id
     else:
         raise HTTPException(403, "Patient scope denied")
     result = await db.scalar(query)
+    if result is None and account.role == "practitioner" and await verified_database(db):
+        result = await db.scalar(
+            select(PatientProfile.id)
+            .join(PractitionerProfile, PractitionerProfile.id == PatientProfile.demo_owner_id)
+            .where(
+                PatientProfile.id == patient_id,
+                PatientProfile.is_demo.is_(True),
+                PatientProfile.is_active.is_(True),
+                PatientProfile.account_id.is_(None),
+                PatientProfile.verified_at.is_(None),
+                PatientProfile.activated_at.is_(None),
+                PatientProfile.initiated_by_id == PatientProfile.demo_owner_id,
+                PractitionerProfile.account_id == account_id,
+                PractitionerProfile.account_role == "practitioner",
+                PractitionerProfile.is_authorized.is_(True),
+            )
+        )
     if result is None:
         # Do not disclose whether an unrelated patient exists.
         raise HTTPException(403, "Patient scope denied")

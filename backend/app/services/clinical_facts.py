@@ -24,14 +24,17 @@ async def lock_patient_scope(db: AsyncSession, account_id: UUID, patient_id: UUI
     await authorize_patient_scope(db, account_id, patient_id)
     try:
         await db.execute(text("SET LOCAL lock_timeout = '5s'"))
-        found = await db.scalar(
-            select(PatientProfile.id)
-            .join(User, User.id == PatientProfile.account_id)
-            .where(
-                PatientProfile.id == patient_id,
-            )
-            .with_for_update(of=[PatientProfile, User])
+        demo = await db.scalar(
+            select(PatientProfile.is_demo).where(PatientProfile.id == patient_id)
         )
+        lock_query = select(PatientProfile.id).where(PatientProfile.id == patient_id)
+        if demo is True:
+            lock_query = lock_query.with_for_update(of=PatientProfile)
+        else:
+            lock_query = lock_query.join(
+                User, User.id == PatientProfile.account_id
+            ).with_for_update(of=[PatientProfile, User])
+        found = await db.scalar(lock_query)
         if found is None:
             raise HTTPException(403, "Patient scope denied")
         account = await eligible_account(db, account_id)

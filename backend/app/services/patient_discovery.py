@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.demo_patients import verified_database
 from app.models import PatientPractitionerConsent as Consent
 from app.models import PatientProfile, PractitionerProfile, User
 from app.schemas.patient_discovery import AccessiblePatient, OwnProfile
@@ -64,6 +65,7 @@ async def accessible_patients(db: AsyncSession, account_id: UUID) -> list[Access
             practitioner_account.role == "practitioner",
             practitioner_account.is_active.is_(True),
             PatientProfile.account_role == "patient",
+            PatientProfile.is_demo.is_(False),
             PatientProfile.is_active.is_(True),
             PatientProfile.verified_at.is_not(None),
             PatientProfile.activated_at.is_not(None),
@@ -79,8 +81,22 @@ async def accessible_patients(db: AsyncSession, account_id: UUID) -> list[Access
         )
         .order_by(PatientProfile.id)
     )
+    ids = set(candidates)
+    if await verified_database(db):
+        ids.update(
+            await db.scalars(
+                select(PatientProfile.id)
+                .join(PractitionerProfile, PractitionerProfile.id == PatientProfile.demo_owner_id)
+                .where(
+                    PatientProfile.is_demo.is_(True),
+                    PatientProfile.is_active.is_(True),
+                    PractitionerProfile.account_id == account_id,
+                    PractitionerProfile.is_authorized.is_(True),
+                )
+            )
+        )
     results = []
-    for patient_id in candidates:
+    for patient_id in sorted(ids):
         try:
             # Retain the authoritative policy, including changes since candidate selection.
             await authorize_patient_scope(db, account_id, patient_id)

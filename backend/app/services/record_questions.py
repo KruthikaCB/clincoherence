@@ -1,11 +1,13 @@
-"""Deterministic record selection, not general language or clinical understanding."""
+"""Natural-language selection over accepted records; independently verified restatements."""
 
 import re
+from datetime import UTC
 from uuid import UUID, uuid5
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.schemas.consistency import FactVersion
 from app.schemas.draft_verification import (
     DraftClaim,
@@ -19,6 +21,7 @@ from app.schemas.record_questions import QuestionStatus, RecordQuestion
 from app.services.consistency import load_accepted_state
 from app.services.consistency_evaluator import ConsistencyInputError, evaluate_consistency
 from app.services.evidence_catalog import load_catalog
+from app.services.question_planner import QuestionPlan, plan_question
 
 ALIASES = {
     "hba1c": "hba1c",
@@ -61,6 +64,8 @@ def build_question(
     payload: RecordQuestion,
     current: list[FactVersion],
     history: list[FactVersion],
+    *,
+    plan: QuestionPlan | None = None,
 ) -> EvidenceAwareDraftRequest | QuestionStatus:
     """Bind only immutable accepted versions. No selection/completeness claim is rendered."""
     try:
@@ -69,7 +74,9 @@ def build_question(
         raise HTTPException(409, "Accepted question context unavailable") from None
     if any(f.category == "INTEGRITY_ERROR" for f in checked.findings):
         raise HTTPException(409, "Accepted question context unavailable")
-    intent, code = parse_question(payload.question)
+    intent, code = (
+        (plan.intent, plan.code) if plan is not None else parse_question(payload.question)
+    )
     if intent in {"refuse", "unsupported"}:
         return QuestionStatus(
             status="REFUSE" if intent == "refuse" else "CLARIFY",
@@ -77,7 +84,9 @@ def build_question(
             if intent == "refuse"
             else "QUESTION_UNSUPPORTED",
         )
-    if payload.include_synthetic_provenance and (intent != "latest" or code != "hba1c"):
+    if payload.include_synthetic_provenance and (
+        intent != "latest" or code != "hba1c" or (plan is not None and plan.position != 0)
+    ):
         return QuestionStatus(status="CLARIFY", reason_code="SYNTHETIC_CONTEXT_UNSUPPORTED")
     selected = [
         r
@@ -87,13 +96,29 @@ def build_question(
         or (intent == "symptoms_history" and r.fact.kind in {"symptom", "history"})
         or r.fact.kind == intent
     ]
+    if plan is not None and plan.medication_name is not None:
+        selected = [
+            r
+            for r in selected
+            if r.fact.kind == "medication"
+            and r.fact.medication_name.casefold() == plan.medication_name.strip().casefold()
+        ]
     if not selected:
         return QuestionStatus(status="CLARIFY", reason_code="NO_MATCHING_RECORDS")
     if intent == "latest":
-        latest = max(r.observed_at for r in selected)
-        selected = [r for r in selected if r.observed_at == latest]
-        if len(selected) != 1:
+        observations = sorted({r.observed_at.astimezone(UTC) for r in selected}, reverse=True)
+        position = plan.position if plan is not None else 0
+        if position >= len(observations):
+            return QuestionStatus(status="CLARIFY", reason_code="NO_MATCHING_RECORDS")
+        latest = observations[position]
+        selected = [r for r in selected if r.observed_at.astimezone(UTC) == latest]
+        # Collapse duplicate reports of one observation for answer selection only.
+        # Decimal equality and aware datetime equality preserve exact values and
+        # equivalent timezones. Different units are never converted or conflated.
+        values = {(r.fact.value, r.fact.unit) for r in selected if r.fact.kind == "laboratory"}
+        if len(values) != 1:
             return QuestionStatus(status="CLARIFY", reason_code="LATEST_AMBIGUOUS")
+        selected = [min(selected, key=lambda row: str(row.version_id))]
     if len(selected) > 32:
         return QuestionStatus(status="CLARIFY", reason_code="TOO_MANY_RECORDS")
     if payload.include_synthetic_provenance and any(
@@ -157,4 +182,30 @@ async def prepare_question(
     db: AsyncSession, actor_id: UUID, patient_id: UUID, payload: RecordQuestion
 ) -> EvidenceAwareDraftRequest | QuestionStatus:
     current, history = await load_accepted_state(db, actor_id, patient_id)
+    if settings.LLM_PROVIDER == "ollama":
+        # Validate before sending even category metadata to the local model.
+        try:
+            checked = evaluate_consistency(patient_id, current, history)
+        except ConsistencyInputError:
+            raise HTTPException(409, "Accepted question context unavailable") from None
+        if any(f.category == "INTEGRITY_ERROR" for f in checked.findings):
+            raise HTTPException(409, "Accepted question context unavailable")
+        if re.search(
+            r"\b(?:should|recommend\w*|diagnose|normal|safe|increase|decrease|interpret\w*)\b"
+            r"|\bprescribe\s+(?:me|a|an)\b",
+            payload.question,
+            re.IGNORECASE,
+        ):
+            return QuestionStatus(status="REFUSE", reason_code="CLINICAL_DECISION_UNSUPPORTED")
+        # Never hold patient/consent locks while the CPU model is running.
+        await db.rollback()
+        plan = await plan_question(payload, current)
+        fresh, fresh_history = await load_accepted_state(db, actor_id, patient_id)
+
+        def snapshot(rows: list[FactVersion]) -> list[str]:
+            return sorted(r.model_dump_json() for r in rows)
+
+        if snapshot(current) != snapshot(fresh) or snapshot(history) != snapshot(fresh_history):
+            raise HTTPException(409, "Patient records changed; ask again using fresh state")
+        return build_question(patient_id, payload, fresh, fresh_history, plan=plan)
     return build_question(patient_id, payload, current, history)

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AcceptedFact, attribution } from "./clinical-types";
+import { FactSummary } from "./fact-card";
 
 type ReleasedRecord = { claim_id: string; text: string };
 type VerifiedRequest = {
@@ -32,6 +33,11 @@ function released(value: unknown, claim: string): ReleasedRecord[] {
   return [{ claim_id: record.claim_id, text: record.text }];
 }
 
+function formatDate(iso: string): string {
+  try { return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); }
+  catch { return iso; }
+}
+
 export default function VerifiedRecords({ token, patient, facts, onDenied }: {
   token: string; patient: string; facts: AcceptedFact[]; onDenied: (status: number) => void;
 }) {
@@ -56,7 +62,6 @@ export default function VerifiedRecords({ token, patient, facts, onDenied }: {
     const controller = new AbortController();
     pending.current = controller; setBusy(true); setRecords([]); setError("");
     const claim = crypto.randomUUID();
-    // Original assertions only: the server independently checks every field.
     const body: VerifiedRequest = {
       operation_id: crypto.randomUUID(),
       request: {
@@ -80,35 +85,91 @@ export default function VerifiedRecords({ token, patient, facts, onDenied }: {
       if (!current()) return;
       if (!response.ok) {
         if ([401, 403, 404].includes(response.status)) { onDenied(response.status); return; }
-        setError(response.status === 409 ? "Records withheld or state changed. Refresh server state before a new explicit request."
-          : response.status === 422 ? "Request rejected. Refresh server state before a new explicit request."
-          : "Response unavailable; the outcome may be uncertain. No automatic retry. Make a new explicit request when ready.");
+        setError(response.status === 409
+          ? "Records withheld or state changed. Refresh server state before retrying."
+          : response.status === 422
+          ? "Request rejected. Refresh server state before retrying."
+          : "Response unavailable. No automatic retry — make a new explicit request when ready.");
         return;
       }
       const result = released(await response.json(), claim);
       if (current() && !controller.signal.aborted) setRecords(result);
     } catch {
-      if (current()) setError("No complete valid response received; the outcome may be uncertain. No automatic retry. Make a new explicit request when ready.");
+      if (current()) setError("No complete valid response received. No automatic retry — make a new explicit request when ready.");
     } finally {
       clearTimeout(timer);
       if (current()) { pending.current = null; setBusy(false); }
     }
   }
 
-  return <section className="panel" aria-label="Verified Records">
-    <h2>Verified Records</h2>
-    <p>Request a technically verified, server-released restatement of an accepted record. Technical verification is not medical correctness, diagnosis or treatment advice. No clinical evidence support is asserted.</p>
-    <label>Accepted record to restate<select className="w-full min-w-0 rounded border border-slate-500 bg-white p-2 text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" value={selected} disabled={busy || !facts.length} onChange={e => { setSelected(e.target.value); setRecords([]); setError(""); }}>
-      {!facts.length && <option value="">No accepted records available</option>}
-      {facts.map(f => <option key={f.version_id} value={f.version_id}>{f.fact.kind} — {attribution(f.attribution)} — {f.observed_at}</option>)}
-    </select></label>
-    <button onClick={verify} disabled={busy || !facts.length} aria-busy={busy}>{busy ? "Requesting verified record..." : "Request verified record"}</button>
-    {error && <p role="alert" aria-label="Verified record error" className="error">{error}</p>}
-    <div aria-live="polite">
-      {!records.length && <p>No server-released verified restatement displayed. Pending and rejected proposals are not eligible.</p>}
-      {records.map(record => <article className="fact-card" aria-label="Server-released record" key={record.claim_id}>
-        <strong>Technically verified record restatement</strong><p className="source-text">{record.text}</p>
-      </article>)}
+  return (
+    <div style={{ padding: "1rem" }} aria-label="Verified Records">
+      <div style={{ marginBottom: "1rem" }}>
+        <div style={{ fontSize: "0.75rem", color: "#6b7280", lineHeight: 1.5 }}>
+          Request a technically verified, server-released restatement of an accepted record.
+          Technical verification is not medical correctness, diagnosis or treatment advice.
+        </div>
+      </div>
+
+      {!facts.length ? (
+        <div style={{ padding: "2rem", textAlign: "center", color: "#9ca3af", fontSize: "0.82rem" }}>
+          No accepted records available. Accept some extracted facts first.
+        </div>
+      ) : (
+        <>
+          <label className="cc-label" style={{ marginBottom: "0.75rem" }}>
+            Select accepted record
+            <select
+              className="cc-select"
+              value={selected}
+              disabled={busy || !facts.length}
+              onChange={e => { setSelected(e.target.value); setRecords([]); setError(""); }}
+            >
+              {facts.map(f => (
+                <option key={f.version_id} value={f.version_id}>
+                  {f.fact.kind} — {attribution(f.attribution)} — {formatDate(f.observed_at)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* Preview of selected fact */}
+          {selected && (() => {
+            const f = facts.find(x => x.version_id === selected);
+            return f ? (
+              <div style={{ padding: "0.6rem 0.75rem", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "var(--radius)", marginBottom: "0.75rem", fontSize: "0.82rem" }}>
+                <span style={{ color: "#6b7280", fontSize: "0.72rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Selected: </span>
+                <FactSummary fact={f.fact} />
+              </div>
+            ) : null;
+          })()}
+
+          <button
+            className="cc-btn cc-btn-primary"
+            onClick={verify}
+            disabled={busy || !facts.length}
+            aria-busy={busy}
+          >
+            {busy ? <><span className="cc-spinner" /> Requesting…</> : "Request Verified Record"}
+          </button>
+
+          {error && <div className="cc-banner error" style={{ marginTop: "0.75rem" }} role="alert">{error}</div>}
+
+          <div aria-live="polite" style={{ marginTop: "0.75rem" }}>
+            {!records.length && !error && !busy && (
+              <div style={{ fontSize: "0.78rem", color: "#9ca3af", padding: "1rem 0" }}>
+                No server-released restatement displayed yet. Pending and rejected proposals are not eligible.
+              </div>
+            )}
+            {records.map(record => (
+              <div key={record.claim_id} className="cc-answer-card">
+                <strong>Technically verified record restatement</strong>
+                {record.text}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
-  </section>;
+  );
 }

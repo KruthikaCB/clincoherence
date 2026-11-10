@@ -32,6 +32,11 @@ from app.services.extraction_provider import (
     ExtractionProvider,
     validate_candidates,
 )
+from app.services.ollama_extraction import (
+    NATURAL_GROUNDING_VERSION,
+    MissingObservationTimeError,
+    OllamaUnavailableError,
+)
 
 
 def sha256(text: str) -> str:
@@ -104,9 +109,20 @@ async def extract_message(
     await db.commit()
     try:
         metadata = ProviderMetadata(name=provider.name, version=provider.version)
-        async with asyncio.timeout(10):
+        grounding_version = getattr(provider, "grounding_version", GROUNDING_VERSION)
+        async with asyncio.timeout(getattr(provider, "timeout_seconds", 10)):
             raw = await provider.extract(payload.text)
-        proposals = validate_candidates(raw, payload.text)
+        proposals = validate_candidates(raw, payload.text, grounding_version=grounding_version)
+    except MissingObservationTimeError:
+        raise HTTPException(
+            422, "Include an explicit timezone-aware observation timestamp in the note"
+        ) from None
+    except TimeoutError:
+        raise HTTPException(504, "Local extraction timed out; no proposals accepted") from None
+    except OllamaUnavailableError:
+        raise HTTPException(
+            503, "Local Ollama unavailable; check the service and installed qwen3:0.6b model"
+        ) from None
     except Exception:
         # Provider output, source text and exception details must not reach logs.
         raise HTTPException(502, "Extraction output unavailable or unsupported") from None
@@ -121,7 +137,7 @@ async def extract_message(
         source_sha256=sha256(payload.text),
         provider_name=metadata.name,
         provider_version=metadata.version,
-        grounding_version=GROUNDING_VERSION,
+        grounding_version=grounding_version,
     )
     db.add(source)
     rows = []
@@ -205,12 +221,16 @@ async def decide(
         raise HTTPException(409, "Confirmation source unavailable")
     try:
         proposed = candidate(proposal)
-        if (
-            source.source_sha256 != sha256(source.text)
-            or source.grounding_version != GROUNDING_VERSION
-        ):
+        if source.source_sha256 != sha256(source.text) or source.grounding_version not in {
+            GROUNDING_VERSION,
+            NATURAL_GROUNDING_VERSION,
+        }:
             raise ValueError("Invalid extraction provenance")
-        validate_candidates([proposed.model_dump(mode="json")], source.text)
+        validate_candidates(
+            [proposed.model_dump(mode="json")],
+            source.text,
+            grounding_version=source.grounding_version,
+        )
     except (ValidationError, ValueError):
         raise HTTPException(409, "Stored proposal failed grounding or validation") from None
     now = await clock(db)

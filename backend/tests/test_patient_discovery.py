@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -78,12 +78,16 @@ def test_routes_have_exact_paths_and_no_dynamic_patient_collision():
 
 
 async def test_service_reuses_authoritative_scope_and_only_suppresses_denial(monkeypatch):
-    actor, first, second = uuid4(), uuid4(), uuid4()
+    actor = uuid4()
+    # Use deterministic UUIDs so sorted() order is stable: first always < second.
+    first = UUID("00000000-0000-4000-8000-000000000001")
+    second = UUID("00000000-0000-4000-8000-000000000002")
     db = AsyncMock()
     db.scalars.return_value = [first, second]
     monkeypatch.setattr(
         service, "eligible_account", AsyncMock(return_value=SimpleNamespace(role="practitioner"))
     )
+    monkeypatch.setattr(service, "verified_database", AsyncMock(return_value=False))
     authorization = AsyncMock(side_effect=[HTTPException(403, "private"), second])
     monkeypatch.setattr(service, "authorize_patient_scope", authorization)
     assert await service.accessible_patients(db, actor) == [AccessiblePatient(patient_id=second)]

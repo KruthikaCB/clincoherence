@@ -10,6 +10,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.clinical_facts import router as clinical_fact_router
 from app.api.v1.confirmations import router as confirmation_router
 from app.api.v1.consents import router as consent_router
+from app.api.v1.demo_patients import router as demo_patients_router
 from app.api.v1.demo_registration import router as demo_registration_router
 from app.api.v1.invitations import router as invitations_router
 from app.api.v1.patient_discovery import router as patient_discovery_router
@@ -18,6 +19,7 @@ from app.api.v1.verified_records import router as verified_records_router
 
 api_v1_router = APIRouter()
 api_v1_router.include_router(auth_router)
+api_v1_router.include_router(demo_patients_router)
 api_v1_router.include_router(demo_registration_router)
 api_v1_router.include_router(clinical_fact_router)
 api_v1_router.include_router(confirmation_router)

@@ -20,7 +20,7 @@ def require_demo_mode(request: Request) -> None:
         if not (
             settings.APP_ENV == "development"
             and settings.ENABLE_DEMO_REGISTRATION
-            and settings.LLM_PROVIDER == "mock"
+            and settings.LLM_PROVIDER in {"mock", "ollama"}
         ):
             raise ValueError("disabled")
         if request.client is None or request.client.host not in {"127.0.0.1", "::1", "localhost"}:

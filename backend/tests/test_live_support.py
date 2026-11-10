@@ -69,8 +69,10 @@ def test_migration_0008_remains_in_shared_live_schema_upgrade_chain():
     from tests.database import migrations
 
     revisions = migrations()
-    assert revisions[-1].revision == "0008_evidence_release"
-    assert revisions[-1].down_revision == revisions[-2].revision == "0007_response_release_intent"
+    evidence = next(item for item in revisions if item.revision == "0008_evidence_release")
+    assert evidence.down_revision == "0007_response_release_intent"
+    assert revisions[-1].revision == "0009_demo_patients"
+    assert revisions[-1].down_revision == evidence.revision
 
 
 async def test_observer_rejects_ownership_failure_before_event_lookup(monkeypatch, run):

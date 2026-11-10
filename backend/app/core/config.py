@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     APP_ENV: str = "production"
     ENABLE_DEMO_REGISTRATION: bool = False
+    ENABLE_DEMO_PATIENTS: bool = False
 
     # --- Database ---
     DATABASE_URL: str = (
@@ -75,6 +76,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str | None = None
     LLM_MODEL_NAME: str | None = None
     LLM_BASE_URL: str | None = None
+    LLM_EXTRACTION_TIMEOUT_SECONDS: int = Field(default=120, ge=5, le=300)
 
 
 settings = Settings()

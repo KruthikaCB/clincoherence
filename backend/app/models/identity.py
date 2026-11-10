@@ -80,11 +80,21 @@ class PatientProfile(Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "(NOT is_active AND activated_at IS NULL) OR "
+            "(NOT is_demo AND ((NOT is_active AND activated_at IS NULL) OR "
             "(is_active AND account_id IS NOT NULL AND verified_at IS NOT NULL "
-            "AND activated_at IS NOT NULL AND activated_at >= verified_at)",
+            "AND activated_at IS NOT NULL AND activated_at >= verified_at))) OR "
+            "(is_demo AND is_active AND account_id IS NULL AND verified_at IS NULL "
+            "AND activated_at IS NULL)",
             name="ck_patient_activation",
         ),
+        CheckConstraint(
+            "(NOT is_demo AND demo_owner_id IS NULL AND demo_identifier IS NULL) OR "
+            "(is_demo AND demo_owner_id IS NOT NULL AND demo_identifier IS NOT NULL "
+            "AND initiated_by_id IS NOT NULL AND initiated_by_id = demo_owner_id "
+            "AND demo_identifier ~ '^[a-z0-9][a-z0-9._-]{0,63}$')",
+            name="ck_patient_demo_identity",
+        ),
+        UniqueConstraint("demo_owner_id", "demo_identifier", name="uq_patient_demo_identifier"),
         CheckConstraint(
             "account_id IS NOT NULL OR initiated_by_id IS NOT NULL",
             name="ck_patient_onboarding_origin",
@@ -99,12 +109,17 @@ class PatientProfile(Base):
     initiated_by_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("practitioner_profiles.id", ondelete="RESTRICT")
     )
+    is_demo: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    demo_owner_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("practitioner_profiles.id", ondelete="RESTRICT", name="fk_patient_demo_owner")
+    )
+    demo_identifier: Mapped[str | None] = mapped_column(String(64))
     is_active: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     account: Mapped[User | None] = relationship()
-    initiated_by: Mapped[PractitionerProfile | None] = relationship()
+    initiated_by: Mapped[PractitionerProfile | None] = relationship(foreign_keys=[initiated_by_id])
     consents: Mapped[list["PatientPractitionerConsent"]] = relationship(back_populates="patient")
 
 

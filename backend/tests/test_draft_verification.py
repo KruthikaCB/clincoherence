@@ -87,7 +87,10 @@ def test_all_existing_fact_types_exact_record_restated(payload):
     assert result.outcome == "GROUNDED" and result.text_verified
     assert result.reason_code == "FACT_RESTATEMENT_MATCH"
     assert result.rendered_text == render_restatement(row)
-    assert result.rendered_text.startswith("Recorded patient_reported")
+    assert "patient-reported" in result.rendered_text.lower()
+    assert str(row.author_id) not in result.rendered_text
+    assert str(row.version_id) not in result.rendered_text
+    assert '"kind":' not in result.rendered_text
     assert not checked(row).unrestricted_text_verified
 
 
@@ -283,12 +286,43 @@ def test_renderer_quotes_record_strings_and_never_verifies_arbitrary_text():
     )
     text = render_restatement(row)
     assert "<script>" not in text and "\n" not in text
-    assert json.loads(text.split(": ", 1)[1])["description"] == row.fact.description
+    assert json.JSONDecoder().raw_decode(text[text.index('"') :])[0] == row.fact.description
     request = request_for(claim_for(row), unverified_text="Provider says safe")
     result = verify_fact_claims(PATIENT, [row], [row], request)
     assert not result.unrestricted_text_verified
     assert "Provider says safe" not in result.model_dump_json()
     assert result.claims[0].text_verified and result.claims[0].rendered_text == text
+
+
+def test_readable_sentences_values_units_dates_and_no_technical_identifiers():
+    laboratory = fact(
+        fact={"kind": "laboratory", "code": "hba1c", "value": "7.1000000000", "unit": "%"}
+    )
+    text = render_restatement(laboratory)
+    assert "HbA1c was 7.1% on" in text and "UTC" in text
+    assert str(laboratory.observed_at.year) in text
+    assert all(
+        str(identifier) not in text
+        for identifier in (
+            laboratory.patient_id,
+            laboratory.author_id,
+            laboratory.version_id,
+            laboratory.fact_id,
+        )
+    )
+    assert "{" not in text and "}" not in text
+    medication = fact(
+        fact={
+            "kind": "medication",
+            "medication_name": "metformin",
+            "dose_value": "500.00",
+            "dose_unit": "mg",
+            "frequency": "twice daily",
+        }
+    )
+    text = render_restatement(medication)
+    assert "metformin, dose 500 mg, frequency twice daily" in text
+    assert "does not confirm current use" in text
 
 
 def test_deterministic_order_frozen_inputs_and_no_evaluation_clock():

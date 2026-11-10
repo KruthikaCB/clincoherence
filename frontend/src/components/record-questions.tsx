@@ -1,19 +1,19 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { ApiError, exact, request, useDashboardTask, uuid } from "./patient-selector";
 import { SyntheticProvenance, syntheticProvenance } from "./synthetic-provenance";
 
 const messages: Record<string, string> = {
-  QUESTION_UNSUPPORTED: "Question not supported or ambiguous. Use one of the exact examples below.",
+  QUESTION_UNSUPPORTED: "I couldn't identify which record you mean. Please name a laboratory test, medication or recorded category.",
   CLINICAL_DECISION_UNSUPPORTED: "Diagnosis, interpretation and treatment decisions are not supported. Ask only about recorded information.",
   NO_MATCHING_RECORDS: "No matching accepted record was selected at lookup. This does not establish absence of a condition or medication.",
-  LATEST_AMBIGUOUS: "Multiple records share the latest observation time. Review Clinical History and clarify the record.",
+  LATEST_AMBIGUOUS: "Multiple records share the selected observation time. Review Clinical History and clarify the record.",
   TOO_MANY_RECORDS: "Too many records for one verified response. Ask about a narrower category.",
   SYNTHETIC_CONTEXT_UNSUPPORTED: "Synthetic provenance is supported only for a unique latest recorded HbA1c in %. No clinical guidance is available.",
 };
 
-function decode(value: unknown, evidence: boolean): { records: { claim_id: string; text: string }[]; notice: string; provenance: SyntheticProvenance[] } {
+export function decodeRecordQuestion(value: unknown, evidence: boolean): { records: { claim_id: string; text: string }[]; notice: string; provenance: SyntheticProvenance[] } {
   if (!value || typeof value !== "object") throw new Error();
   if ((value as { representation_version?: unknown }).representation_version === "record-question-status-v1") {
     const body = exact(value, "reason_code,representation_version,status");
@@ -37,6 +37,7 @@ export default function RecordQuestions({ token, patient, onDenied }: {
   token: string; patient: string; onDenied: (status: number) => void;
 }) {
   const [question, setQuestion] = useState("");
+  const recentQuestions = useRef<string[]>([]);
   const [records, setRecords] = useState<{ claim_id: string; text: string }[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -49,9 +50,10 @@ export default function RecordQuestions({ token, patient, onDenied }: {
     const task = begin(); if (!task) return;
     clear();
     try {
-      const result = decode(await request<unknown>(`/patients/${patient}/record-questions`, token,
-        { question: question.trim(), operation_id: crypto.randomUUID(), ...(evidence ? { include_synthetic_provenance: true } : {}) }, task.signal), evidence);
-      if (task.current() && !task.signal.aborted) { setRecords(result.records); setNotice(result.notice); setProvenance(result.provenance); }
+      const result = decodeRecordQuestion(await request<unknown>(`/patients/${patient}/record-questions`, token,
+        { question: question.trim(), operation_id: crypto.randomUUID(), ...(evidence ? { include_synthetic_provenance: true } : {}),
+          ...(recentQuestions.current.length ? { previous_questions: recentQuestions.current } : {}) }, task.signal, 310000), evidence);
+      if (task.current() && !task.signal.aborted) { recentQuestions.current = [...recentQuestions.current, question.trim()].slice(-6); setRecords(result.records); setNotice(result.notice); setProvenance(result.provenance); }
     } catch (cause) {
       if (!task.current()) return;
       if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) onDenied(cause.status);
@@ -60,7 +62,7 @@ export default function RecordQuestions({ token, patient, onDenied }: {
   }
   return <section className="panel" aria-label="Record questions">
     <h2>Ask about accepted T2DM records</h2>
-    <p>Deterministic supported questions only, not general medical understanding. Answers are server-released fact restatements, not medical correctness, diagnosis, clinical safety or treatment advice.</p>
+    <p>Ask naturally about this patient&apos;s accepted records, including follow-up questions. Answers are server-released fact restatements, not medical correctness, diagnosis, clinical safety or treatment advice.</p>
     <p>Selection uses accepted versions at authorized lookup. “Latest” uses observation time; newer entries may arrive afterward. Recorded medications do not establish what is currently being taken. Pending/rejected proposals and private transcripts are never question context.</p>
     <details><summary>Supported question examples</summary><ul>
       <li>What confirmed clinical information is recorded?</li>

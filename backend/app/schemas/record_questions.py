@@ -1,6 +1,6 @@
 """Narrow question input; no caller-provided verification or release authority."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -12,6 +12,9 @@ class RecordQuestion(ConsistencySchema):
     operation_id: UUID
     question: str = Field(strict=True, min_length=1, max_length=500)
     include_synthetic_provenance: bool = Field(default=False, strict=True)
+    previous_questions: tuple[
+        Annotated[str, Field(strict=True, min_length=1, max_length=500)], ...
+    ] = Field(default=(), max_length=6)
 
 
 class QuestionStatus(ConsistencySchema):
