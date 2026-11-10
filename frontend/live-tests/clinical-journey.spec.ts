@@ -18,6 +18,92 @@ const factCard = (page: Page, fact: AcceptedFact) => accepted(page).filter({
   has: page.getByText(fact.attribution === "patient_reported" ? "Patient-reported" : "Practitioner-managed", { exact: true }),
 });
 const correctionPath = (fact: AcceptedFact) => `/patients/${fact.patient_id}/facts/${fact.fact_id}/corrections`;
+const questions = (page: Page) => page.getByRole("region", { name: "Record questions", exact: true });
+const questionRecords = (page: Page) => page.getByRole("article", { name: "Released question record", exact: true });
+const questionOperations = new Set<string>();
+
+async function askRecords(page: Page, patientId: string, question: string) {
+  await questions(page).getByLabel("Record question", { exact: true }).fill(question);
+  const pending = page.waitForResponse(r => r.url().endsWith(`/patients/${patientId}/record-questions`) && r.request().method() === "POST");
+  await questions(page).getByRole("button", { name: "Ask records", exact: true }).click();
+  const response = await pending;
+  const input = response.request().postDataJSON() as { question: string; operation_id: string };
+  expect(Object.keys(input).sort()).toEqual(["operation_id", "question"]);
+  expect(input.question === question && /^[0-9a-f-]{36}$/.test(input.operation_id) && !questionOperations.has(input.operation_id)).toBe(true);
+  questionOperations.add(input.operation_id);
+  if (response.status() === 200) expect(response.headers()["cache-control"]).toBe("no-store");
+  return { response, input };
+}
+
+async function questionStatus(page: Page, patientId: string, question: string, reason: string) {
+  const { response } = await askRecords(page, patientId, question);
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(Object.keys(body).sort()).toEqual(["reason_code", "representation_version", "status"]);
+  expect(body.representation_version === "record-question-status-v1" && body.reason_code === reason &&
+    body.status === (reason === "CLINICAL_DECISION_UNSUPPORTED" ? "REFUSE" : "CLARIFY")).toBe(true);
+  await expect(questions(page).getByRole("status")).toBeVisible();
+  await expect(questionRecords(page)).toHaveCount(0);
+}
+
+async function questionRelease(page: Page, patientId: string, question: string, facts: AcceptedFact[], audit = false) {
+  const { response, input } = await askRecords(page, patientId, question);
+  expect(response.status()).toBe(200);
+  const bytes = await response.body();
+  const body = JSON.parse(bytes.toString()) as { representation_version: string; records: { claim_id: string; text: string }[] };
+  expect(Object.keys(body).sort()).toEqual(["records", "representation_version"]);
+  expect(body.representation_version === "record-response-json-v1" && body.records.length === facts.length).toBe(true);
+  expect(new Set(body.records.map(r => r.claim_id)).size === facts.length).toBe(true);
+  for (const row of body.records) {
+    expect(Object.keys(row).sort()).toEqual(["claim_id", "text"]);
+    expect(typeof row.text === "string" && facts.some(f => row.text.includes(`version ${f.version_id};`) &&
+      row.text.startsWith(`Recorded ${f.attribution} ${f.fact.kind} fact (author ${f.author_role} ${f.author_id};`))).toBe(true);
+  }
+  // Every expected version must be represented, not just repeated text for one record.
+  expect(facts.every(f => body.records.some(r => r.text.includes(`version ${f.version_id};`)))).toBe(true);
+  await expect(questionRecords(page)).toHaveCount(body.records.length);
+  for (const row of body.records) {
+    const rendered = questionRecords(page).filter({ hasText: row.text });
+    expect(await rendered.locator("p").textContent() === row.text).toBe(true);
+  }
+  if (audit) {
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const observer = spawnSync(setting("CC_LIVE_PYTHON"), [
+      "-B", "-m", "tests.live_support", "observe", "--operation", input.operation_id, "--digest", digest,
+    ], { cwd: setting("CC_LIVE_BACKEND"), env: process.env, encoding: "utf8", timeout: 15_000, windowsHide: true });
+    expect(observer.status === 0).toBe(true);
+    const metadata = JSON.parse(observer.stdout);
+    expect(metadata.events === 1 && metadata.intents === 1 && metadata.pass && metadata.digest_matches).toBe(true);
+  }
+  return { input, body };
+}
+
+async function delayedQuestionContext(page: Page, patientId: string, changeContext: () => Promise<void>) {
+  const path = `**/patients/${patientId}/record-questions`;
+  let entered!: () => void, release!: () => void, finished!: () => void;
+  const started = new Promise<void>(r => { entered = r; });
+  const gate = new Promise<void>(r => { release = r; });
+  const completed = new Promise<void>(r => { finished = r; });
+  let available = false, seen = false;
+  await page.route(path, async route => {
+    seen = true;
+    let actual: Awaited<ReturnType<typeof route.fetch>> | undefined;
+    try {
+      actual = await route.fetch({ maxRetries: 0 });
+      available = actual.status() === 200;
+      entered(); await gate;
+      await route.fulfill({ response: actual }); // Real authorized bytes only; no fabricated response.
+    } catch { entered(); } // Context cancellation is expected; no raw diagnostics.
+    finally { try { await actual?.dispose(); } catch { available = false; } finally { finished(); } }
+  });
+  try {
+    await questions(page).getByLabel("Record question", { exact: true }).fill("What confirmed clinical information is recorded?");
+    await questions(page).getByRole("button", { name: "Ask records", exact: true }).click();
+    await started; expect(available).toBe(true);
+    await changeContext(); release(); await completed; expect(available).toBe(true);
+    await expect(questionRecords(page)).toHaveCount(0);
+  } finally { release(); if (seen) await completed; await page.unroute(path); }
+}
 
 async function openHistory(page: Page, fact: AcceptedFact, correct = false) {
   const pending = page.waitForResponse(r => r.url().endsWith(`/facts/${fact.fact_id}/history`));
@@ -183,7 +269,7 @@ async function refreshPatients(doctor: Page) {
   await expect(doctor.getByLabel("Select authorized patient")).toBeEnabled();
 }
 
-test("real onboarding, consent, confirmation, history, corrections, audited release and revocation", async ({ browser }) => {
+test("real onboarding, consent, confirmation, history, corrections, record questions, audited release and revocation", async ({ browser }) => {
   test.setTimeout(300_000); // Still bounded below the unchanged launcher's 600-second browser deadline.
   const contexts: BrowserContext[] = [];
   const newContext = async () => {
@@ -209,6 +295,9 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     const beforeConsent = await call(doctor, `/patients/${first.patient_id}/facts`, own.bearer);
     expect(beforeConsent.status).toBe(403);
     expect("records" in beforeConsent.body || Array.isArray(beforeConsent.body)).toBe(false);
+    await questionStatus(patient, first.patient_id, "What confirmed clinical information is recorded?", "NO_MATCHING_RECORDS");
+    await questionStatus(patient, first.patient_id, "Should I change my medication?", "CLINICAL_DECISION_UNSUPPORTED");
+    await questionStatus(patient, first.patient_id, "What is my latest recorded hba1c and glucose?", "QUESTION_UNSUPPORTED");
     await grant(patient, own.profile_id);
     await grant(other, own.profile_id);
     await refreshPatients(doctor);
@@ -225,15 +314,19 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     await patient.getByRole("button", { name: "Send for extraction", exact: true }).click();
     await expect(cards(patient)).toHaveCount(2);
     await expect(accepted(patient)).toHaveCount(0);
+    await questionStatus(patient, first.patient_id, "What is my latest recorded hba1c?", "NO_MATCHING_RECORDS");
     await cards(patient).filter({ hasText: "hba1c" }).getByRole("button", { name: "Confirm", exact: true }).click();
     await expect(accepted(patient)).toHaveCount(1);
     await cards(patient).filter({ hasText: "glucose" }).getByRole("button", { name: "Reject", exact: true }).click();
     await expect(cards(patient).filter({ hasText: "REJECTED" })).toHaveCount(1);
     await expect(accepted(patient)).toHaveCount(1);
+    await questionStatus(patient, first.patient_id, "What is my latest recorded glucose?", "NO_MATCHING_RECORDS");
 
     const originalFacts = await call(patient, `/patients/${first.patient_id}/facts`, patientAuth.bearer);
     expect(originalFacts.status).toBe(200);
     const originalPatientFact = acceptedFact(originalFacts.body[0], first.patient_id);
+    const originalQuestion = await questionRelease(patient, first.patient_id, "What is my latest recorded value for hba1c?", [originalPatientFact]);
+    expect(originalQuestion.body.records[0].text.includes('"value":"7.1"') && originalQuestion.body.records[0].text.includes('"unit":"%"')).toBe(true);
     expect(originalPatientFact.attribution === "patient_reported" && originalPatientFact.entry_method === "LLM_EXTRACTED").toBe(true);
     const originalHistory = await openHistory(patient, originalPatientFact);
     expect(originalHistory.length === 1 && originalHistory[0].confirmed_by_id === originalPatientFact.author_id).toBe(true);
@@ -246,13 +339,19 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     const patientPayload = await prepareCorrection(patient, originalPatientFact, "7.2000000000", "Synthetic patient correction");
     let patientFact = await submitCorrection(patient, originalPatientFact, patientPayload);
     await expect(patient.getByRole("article", { name: "Server-released record", exact: true })).toHaveCount(0);
+    await expect(questionRecords(patient)).toHaveCount(0);
     const patientHistory = await openHistory(patient, patientFact);
     expect(patientHistory.length === 2 && JSON.stringify(patientHistory[0]) === JSON.stringify(originalHistory[0])).toBe(true);
     await expect(history(patient)).toContainText(`Version ${originalPatientFact.version} — Superseded`);
+    const patientQuestion = await questionRelease(patient, first.patient_id, "What is my latest recorded value for hba1c?", [patientFact], true);
+    expect(patientQuestion.body.records[0].text.includes('"value":"7.2"')).toBe(true); // Renderer normalizes decimals, not JS arithmetic.
+    const questionReplay = await call(patient, `/patients/${first.patient_id}/record-questions`, patientAuth.bearer, patientQuestion.input);
+    expect(questionReplay.status === 409 && JSON.stringify(questionReplay.body) === JSON.stringify({ detail: "Audited response unavailable" })).toBe(true);
 
     await doctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
     await expect(accepted(doctor)).toHaveCount(1);
     await expect(cards(doctor)).toHaveCount(0); // Consent never shares another speaker's transcript.
+    await questionRelease(doctor, first.patient_id, "What is the latest recorded hba1c?", [patientFact]);
     const released = doctor.waitForResponse(r => r.url().endsWith("/verified-records"));
     await doctor.getByRole("button", { name: "Request verified record", exact: true }).click();
     const response = await released;
@@ -297,6 +396,10 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     expect(doctorHistory.length === 2 && doctorHistory[0].version_id === doctorOriginal.version_id &&
       doctorHistory[0].author_id === doctorOriginal.author_id && doctorHistory[0].provenance.source === doctorOriginal.provenance.source).toBe(true);
     await expect(history(doctor)).toContainText(`Version ${doctorOriginal.version} — Superseded`);
+    // Both corrections use the same observation instant: never silently choose an attribution.
+    await questionStatus(doctor, first.patient_id, "What is my latest recorded hba1c?", "LATEST_AMBIGUOUS");
+    const clinicalQuestion = await questionRelease(doctor, first.patient_id, "What confirmed clinical information is recorded?", [patientFact, doctorFact], true);
+    expect(clinicalQuestion.body.records.every(r => !r.text.includes('"code":"glucose"'))).toBe(true);
 
     await patient.getByRole("button", { name: "Refresh server state", exact: true }).click();
     await expect(accepted(patient)).toHaveCount(2);
@@ -371,6 +474,9 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     scopeDenied(await call(outsider, correctionPath(doctorFact), outsiderAuth.bearer, {
       ...doctorPayload, expected_version_id: doctorFact.version_id,
     }), protectedHistoryMarkers);
+    const questionBody = { operation_id: crypto.randomUUID(), question: "What confirmed clinical information is recorded?" };
+    scopeDenied(await call(other, `/patients/${first.patient_id}/record-questions`, otherAuth.bearer, questionBody), protectedHistoryMarkers);
+    scopeDenied(await call(outsider, `/patients/${first.patient_id}/record-questions`, outsiderAuth.bearer, { ...questionBody, operation_id: crypto.randomUUID() }), protectedHistoryMarkers);
     await prepareCorrection(doctor, doctorFact, "6.9500000000", "UNSUBMITTED SWITCH DRAFT");
 
     // Delay an actual authorized response; no fabricated JSON or authorization overrides.
@@ -400,11 +506,32 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     await expect(doctor.getByText("UNSUBMITTED SWITCH DRAFT", { exact: true })).toHaveCount(0);
     await doctor.unroute(path);
 
+    // A normal authorized structured-entry POST, not an ORM seed or a medication/adherence claim.
+    const medication = await call(other, `/patients/${second.patient_id}/facts`, otherAuth.bearer, {
+      fact: { kind: "medication", medication_name: "Synthetic recorded medication", dose_value: "500.0000000000", dose_unit: "mg", frequency: "synthetic recorded schedule" },
+      observed_at: "2026-01-17T10:00:00Z",
+      provenance: { source: "Synthetic live medication fixture", reference: null, data_origin: "synthetic" },
+    });
+    expect(medication.status).toBe(201);
+    const medicationFact = acceptedFact(medication.body, second.patient_id);
+    await other.getByRole("button", { name: "Refresh server state", exact: true }).click();
+    await expect(accepted(other)).toHaveCount(1);
+    const medicationQuestion = await questionRelease(other, second.patient_id, "What medications are currently recorded?", [medicationFact], true);
+    expect(medicationQuestion.body.records[0].text.includes('"medication_name":"Synthetic recorded medication"') &&
+      medicationQuestion.body.records[0].text.includes('"dose_value":"500"') &&
+      medicationQuestion.body.records.every(r => !r.text.includes(first.patient_id) && !r.text.includes(patientFact.version_id))).toBe(true);
+    await expect(questions(other)).toContainText("Recorded medications do not establish what is currently being taken");
+    await questionRelease(doctor, second.patient_id, "What medications are recorded?", [medicationFact]);
+
     // Switch with an actual open correction draft, before any refresh unmounts it.
     await doctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
     await expect(accepted(doctor)).toHaveCount(2);
+    await expect(questionRecords(doctor)).toHaveCount(0);
     await prepareCorrection(doctor, doctorFact, "6.9500000000", "UNSUBMITTED CONTEXT DRAFT");
-    await doctor.getByLabel("Select authorized patient").selectOption(second.patient_id);
+    await delayedQuestionContext(doctor, first.patient_id, async () => {
+      await doctor.getByLabel("Select authorized patient").selectOption(second.patient_id);
+      await expect(doctor.getByText(`Patient context: ${second.patient_id}`, { exact: true })).toBeVisible();
+    });
     await expect(doctor.getByText(`Patient context: ${second.patient_id}`, { exact: true })).toBeVisible();
     await expect(editor(doctor)).toHaveCount(0);
     await expect(history(doctor)).toHaveCount(0);
@@ -412,7 +539,10 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     await doctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
     await expect(accepted(doctor)).toHaveCount(2);
     await prepareCorrection(doctor, doctorFact, "6.9500000000", "UNSUBMITTED SIGNOUT DRAFT");
-    await doctor.getByRole("button", { name: "Sign out", exact: true }).click();
+    await delayedQuestionContext(doctor, first.patient_id, async () => {
+      await doctor.getByRole("button", { name: "Sign out", exact: true }).click();
+      await expect(doctor.getByLabel("Password", { exact: true })).toBeVisible();
+    });
     await expect(editor(doctor)).toHaveCount(0);
     await expect(history(doctor)).toHaveCount(0);
     await expect(accepted(doctor)).toHaveCount(0);
@@ -424,11 +554,24 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     await expect(accepted(doctor)).toHaveCount(2);
     expect((await openHistory(doctor, doctorFact)).length).toBe(2); // Drafts never created versions.
     await prepareCorrection(doctor, doctorFact, "6.9500000000", "UNSUBMITTED REVOKED DRAFT");
+    // Same eligible practitioner in an independent unsaved session, to test question-specific denial.
+    const questionDoctor = await (await newContext()).newPage();
+    await login(questionDoctor, setting("CC_LIVE_DOCTOR"));
+    await questionDoctor.getByLabel("Select authorized patient").selectOption(first.patient_id);
+    await expect(accepted(questionDoctor)).toHaveCount(2);
+    await questionRelease(questionDoctor, first.patient_id, "What confirmed clinical information is recorded?", [patientFact, doctorFact]);
 
     await patient.getByRole("button", { name: "Review access revocation", exact: true }).click();
     const revoked = patient.waitForResponse(r => r.url().endsWith(`/${own.profile_id}/revoke`));
     await patient.getByRole("button", { name: "Confirm revoke access", exact: true }).click();
     expect((await revoked).status()).toBe(200);
+    const deniedQuestion = await askRecords(questionDoctor, first.patient_id, "What confirmed clinical information is recorded?");
+    scopeDenied({ status: deniedQuestion.response.status(), body: await deniedQuestion.response.json() }, protectedHistoryMarkers);
+    await expect(questionDoctor.getByRole("alert", { name: "Request error", exact: true })).toBeVisible();
+    await expect(questionRecords(questionDoctor)).toHaveCount(0);
+    await expect(accepted(questionDoctor)).toHaveCount(0);
+    await expect(cards(questionDoctor)).toHaveCount(0);
+    await expect(questions(questionDoctor)).toHaveCount(0);
     const revokedWrite = doctor.waitForResponse(r => r.url().endsWith(correctionPath(doctorFact)) && r.request().method() === "POST");
     await doctor.getByRole("button", { name: "Submit new version", exact: true }).click();
     const revokedResponse = await revokedWrite;
@@ -445,6 +588,9 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
       ...request, operation_id: crypto.randomUUID(),
     });
     scopeDenied(withheld, protectedMarkers);
+    scopeDenied(await call(doctor, `/patients/${first.patient_id}/record-questions`, own.bearer, {
+      ...questionBody, operation_id: crypto.randomUUID(),
+    }), [...protectedMarkers, ...clinicalQuestion.body.records.map(r => r.text)]);
     scopeDenied(await call(doctor, `/patients/${first.patient_id}/facts/${doctorFact.fact_id}/history`, own.bearer), protectedHistoryMarkers);
     scopeDenied(await call(doctor, correctionPath(doctorFact), own.bearer, {
       ...doctorPayload, expected_version_id: doctorFact.version_id,
@@ -455,7 +601,7 @@ test("real onboarding, consent, confirmation, history, corrections, audited rele
     await doctor.getByRole("button", { name: "Sign out", exact: true }).click();
     await expect(doctor.getByLabel("Password", { exact: true })).toBeVisible();
     await expect(accepted(doctor)).toHaveCount(0);
-    for (const page of [doctor, patient, other, outsider]) {
+    for (const page of [doctor, patient, other, outsider, questionDoctor]) {
       expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
       expect((await page.context().cookies()).length).toBe(0);
     }

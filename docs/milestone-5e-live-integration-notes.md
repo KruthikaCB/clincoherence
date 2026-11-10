@@ -396,6 +396,86 @@ timeout/duplicate-click tests remain necessary. No finite no-retry observation
 proves absence of all future requests. This adds no evidence binding, clinical
 interpretation, medical correctness claim, treatment rule or dataset integration.
 
+## Milestone 6B — Live record-question coverage
+
+Only the existing journey and this note change. Production code, launcher,
+migrations, ownership/cleanup guards, zero retries, artifact suppression and the
+existing 300-second journey/600-second browser deadlines are unchanged. The user
+reported successful prior live history/corrections execution and 829 PostgreSQL
+backend tests after 6A. Those results do not validate this new journey extension.
+**The expanded 6B live journey must still be run separately with approval.**
+
+Added scenarios use ordinary authenticated browser requests through the Next.js
+rewrite, existing synthetic accounts and real application endpoints:
+
+- Before accepted history exists, a record question returns the exact fixed
+  NO_MATCHING_RECORDS protocol status. Treatment-decision wording returns the
+  fixed refusal, and a combined unsupported laboratory question clarifies.
+- Asking about a pending HbA1c or rejected glucose returns no accepted match.
+  Subsequent HbA1c queries return the accepted original/corrected version only.
+  A correction clears the earlier question response as well as Verified Records.
+- Both patient and consented practitioner ask supported laboratory/record questions.
+  The existing corrections give two distinct roots the same observation instant;
+  a latest-value question must return LATEST_AMBIGUOUS instead of choosing a role
+  or value. A full-record question returns both accepted versions.
+- A normal authenticated structured-entry POST creates one synthetic medication
+  fact for the second patient, after the original empty-patient switching assertions
+  have completed. It is not an ORM seed, direct database write or bypass of
+  extraction confirmation. No existing first-patient history assertions are
+  weakened. Both the second patient and the authorized practitioner request its
+  recorded medication information. The test checks the existing adherence caveat
+  and that first-patient version references do not enter the second patient's answer.
+- Successful responses must have exactly the unchanged released-record envelope
+  and record fields. Each record must reference one of the expected accepted
+  version IDs with the correct author/attribution; every expected version appears.
+  The rendered UI paragraph must equal the corresponding server response text.
+  Decimal strings in authoritative facts are unchanged; renderer text uses the
+  existing server Decimal normalization (for example 7.2000000000 becomes 7.2),
+  without JavaScript numeric conversion or clinical interpretation.
+- Selected laboratory, full-record and medication answers are checked using the
+  existing private read-only observer: one committed PASS audit/intent for the
+  operation, matching the exact received-byte SHA-256 digest. No observer or
+  public debug endpoint is added. Deliberately replaying a successful question's
+  operation UUID must return generic 409 withholding, never records. Other
+  explicit panel submissions must use distinct operation UUIDs and only submit
+  the question and operation ID.
+- Real already-authorized question responses are delayed while the existing
+  correction-draft switching and sign-out actions occur. They are forwarded
+  unchanged after the context changes and must never repopulate question records.
+  The original delayed-facts scenario remains intact. Delays are in transport
+  after upstream response completion, not while claiming to hold server DB locks.
+- Cross-patient and outsider question requests fail with exact generic scope
+  denials. Another unsaved browser context signs in as the same eligible
+  practitioner, obtains a real answer, and then asks again after patient consent
+  revocation. The real 403 must clear its prior answer and accepted records, with
+  no draft/raw error echo. Existing correction-denial and original-JWT denial
+  checks remain. All contexts retain the existing empty storage/cookie assertions.
+
+Only real upstream response forwarding/delay is used; there are no mocked API
+bodies, external LLM services, evidence changes, new roles, datasets or direct
+database fixture operations. Scope-denial assertions check absence of protected
+markers; failures remain sanitized by the journey's existing outer error boundary.
+No screenshots, DOM snapshots, traces, auth state, response attachments or saved
+clinical data are introduced. The observer still reports only metadata counts and
+booleans. A committed intent is not proof of delivery, reading, medical correctness
+or clinical safety.
+
+The medication fixture is deliberately introduced only after the second patient's
+empty-state checks. First-patient helpers still have one laboratory root per
+attribution. This is a controlled serial smoke journey, not a general fixture
+library, database stress test, proof of all concurrent revocation timings or
+completeness/latest-at-handoff verification. 6A lookup-time selection limits,
+fixed-status semantics, mock-provider scope and frozen evidence policy remain.
+
+6B implementation validation: **121 mocked harness safety tests passed, 0 failed,
+0 skipped**; **159 mocked frontend Playwright tests passed, 0 failed, 0 skipped**.
+ESLint, TypeScript (including the live test source), production build and diff
+checks passed. Only existing Next.js mock-test tooling was started. No backend
+test source changed, so no backend lint/type-check rerun was necessary. There
+were no PostgreSQL connections, schema operations or guarded live runs. Review
+of the two-file diff found no blocking issue; the added live assertions await
+the user's separate PowerShell run.
+
 ## Remaining limitations
 
 - Live journey and Windows process supervision still require approved live validation.
