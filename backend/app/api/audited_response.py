@@ -11,9 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, Response
 from starlette.types import Receive, Scope, Send
 
+from app.schemas.clinical_summary import ClinicalSummaryReleaseRequest
 from app.schemas.evidence_aware_draft import EvidenceAwareDraftRequest
+from app.services.clinical_summary_release import (
+    prepare_summary_release,
+    revalidate_summary_release,
+)
 from app.services.evidence_aware_evaluator import catalogue_fingerprint
-from app.services.response_release import prepare_release, revalidate_release, transaction_identity
+from app.services.response_release import (
+    _Prepared,
+    prepare_release,
+    revalidate_release,
+    transaction_identity,
+)
 
 MAX_HANDOFF_TIMEOUT = 5.0
 
@@ -55,10 +65,13 @@ class AuditedRecordResponse(Response):
         *,
         handoff_timeout: float = 5.0,
         include_provenance: bool = False,
+        clinical_summary: bool = False,
     ) -> None:
         super().__init__(content=b"")  # Its body/headers are NEVER used for sending.
         if type(include_provenance) is not bool:
             raise ValueError("Invalid provenance release mode")
+        if type(clinical_summary) is not bool or (clinical_summary and include_provenance):
+            raise ValueError("Invalid summary release mode")
         self._include_provenance = include_provenance
         if (
             isinstance(handoff_timeout, bool)
@@ -66,16 +79,59 @@ class AuditedRecordResponse(Response):
             or not 0 < handoff_timeout <= MAX_HANDOFF_TIMEOUT
         ):
             raise ValueError("Handoff timeout must be positive and at most five seconds")
+        self._request: EvidenceAwareDraftRequest | None = None
+        self._summary_request: ClinicalSummaryReleaseRequest | None = None
         try:
-            self._request = EvidenceAwareDraftRequest.model_validate(
-                original_request.model_dump(warnings=False)
-                if isinstance(original_request, EvidenceAwareDraftRequest)
-                else original_request
-            )
+            if clinical_summary:
+                self._summary_request = ClinicalSummaryReleaseRequest.model_validate(
+                    original_request.model_dump(warnings=False)
+                    if isinstance(original_request, ClinicalSummaryReleaseRequest)
+                    else original_request
+                )
+            else:
+                self._request = EvidenceAwareDraftRequest.model_validate(
+                    original_request.model_dump(warnings=False)
+                    if isinstance(original_request, EvidenceAwareDraftRequest)
+                    else original_request
+                )
         except ValidationError:
             raise HTTPException(422, "Invalid audited release request") from None
         self._actor, self._patient, self._operation = actor_id, patient_id, operation_id
         self._factory, self._timeout, self._used = session_factory, handoff_timeout, False
+
+    async def _prepare(self, db: AsyncSession) -> _Prepared:
+        if self._summary_request is not None:
+            return await prepare_summary_release(
+                db, self._actor, self._patient, self._summary_request, self._operation
+            )
+        assert self._request is not None
+        if self._include_provenance:
+            return await prepare_release(
+                db,
+                self._actor,
+                self._patient,
+                self._request,
+                self._operation,
+                include_provenance=True,
+            )
+        return await prepare_release(db, self._actor, self._patient, self._request, self._operation)
+
+    async def _revalidate(self, db: AsyncSession, prepared: _Prepared) -> tuple[bytes, str]:
+        if self._summary_request is not None:
+            return await revalidate_summary_release(
+                db, self._actor, self._patient, self._summary_request, self._operation, prepared
+            )
+        assert self._request is not None
+        if self._include_provenance:
+            return await revalidate_release(
+                db,
+                self._actor,
+                self._patient,
+                self._request,
+                prepared,
+                include_provenance=True,
+            )
+        return await revalidate_release(db, self._actor, self._patient, self._request, prepared)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if self._used:
@@ -100,20 +156,7 @@ class AuditedRecordResponse(Response):
                 first_session = db
                 try:
                     _require_fresh(db)
-                    prepared = (
-                        await prepare_release(
-                            db,
-                            self._actor,
-                            self._patient,
-                            self._request,
-                            self._operation,
-                            include_provenance=True,
-                        )
-                        if self._include_provenance
-                        else await prepare_release(
-                            db, self._actor, self._patient, self._request, self._operation
-                        )
-                    )
+                    prepared = await self._prepare(db)
                     if disconnected.is_set():
                         raise asyncio.CancelledError()
                     await (
@@ -129,20 +172,7 @@ class AuditedRecordResponse(Response):
                     _require_fresh(db)
                     if db is first_session:
                         raise HTTPException(503, "Distinct release sessions required")
-                    body, fingerprint = (
-                        await revalidate_release(
-                            db,
-                            self._actor,
-                            self._patient,
-                            self._request,
-                            prepared,
-                            include_provenance=True,
-                        )
-                        if self._include_provenance
-                        else await revalidate_release(
-                            db, self._actor, self._patient, self._request, prepared
-                        )
-                    )
+                    body, fingerprint = await self._revalidate(db, prepared)
                     identity = await transaction_identity(db)
                     check_lock = asyncio.Lock()
 

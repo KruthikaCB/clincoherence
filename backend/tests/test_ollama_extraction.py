@@ -424,3 +424,71 @@ async def test_egfr_formatting_does_not_permit_conversion_or_mismatched_facts(
     install_transport(monkeypatch, lambda request: reply(payload, note))
     with pytest.raises(ollama.OllamaOutputError):
         await extraction_provider().extract(note)
+
+
+@pytest.mark.parametrize(
+    "note,generated_quote,expected_matched_quote,fact",
+    [
+        (
+            f"HbA1c was 6.9 % on {TIME}",  # Note lacks period
+            f"HbA1c was 6.9 % on {TIME}.",  # Model output with period
+            f"HbA1c was 6.9 % on {TIME}",
+            {"kind": "laboratory", "code": "hba1c", "value": "6.9", "unit": "%"},
+        ),
+        (
+            f"Blood glucose was 135 mg/dL on {TIME}.",  # Note has period
+            f"Blood glucose was 135 mg/dL on {TIME}",  # Model output without period
+            f"Blood glucose was 135 mg/dL on {TIME}",
+            {"kind": "laboratory", "code": "glucose", "value": "135", "unit": "mg/dL"},
+        ),
+        (
+            f"eGFR is 58 mL/min/1.73m2 on {TIME}.",  # Note has ASCII 2
+            f"eGFR is 58 mL/min/1.73m\u00b2 on {TIME}.",  # Model output with superscript ²
+            f"eGFR is 58 mL/min/1.73m2 on {TIME}.",
+            {"kind": "laboratory", "code": "egfr", "value": "58", "unit": "mL/min/1.73m2"},
+        ),
+        (
+            f"eGFR is 58 mL/min/1.73m\u00b2 on {TIME}.",  # Note has superscript ²
+            f"eGFR is 58 mL/min/1.73m2 on {TIME}.",  # Model output with ASCII 2
+            f"eGFR is 58 mL/min/1.73m\u00b2 on {TIME}.",
+            {"kind": "laboratory", "code": "egfr", "value": "58", "unit": "mL/min/1.73m2"},
+        ),
+        (
+            f"Patient takes metformin 500 mg twice daily on {TIME}.",
+            f"Patient is taking metformin 500 mg twice daily on {TIME}.",  # Paraphrased by model
+            f"Patient takes metformin 500 mg twice daily on {TIME}.",  # Bound to single line
+            {
+                "kind": "medication",
+                "medication_name": "metformin",
+                "dose_value": "500",
+                "dose_unit": "mg",
+                "frequency": "twice daily",
+            },
+        ),
+    ],
+)
+async def test_quote_matching_punctuation_superscript_and_provenance(
+    monkeypatch, note, generated_quote, expected_matched_quote, fact
+):
+    install_transport(monkeypatch, lambda request: reply(fact, generated_quote))
+    raw = await extraction_provider().extract(note)
+    candidates = validate_candidates(raw, note, grounding_version=ollama.NATURAL_GROUNDING_VERSION)
+    assert len(candidates) == 1
+    assert candidates[0].source_quote == expected_matched_quote
+    start, end = candidates[0].source_start, candidates[0].source_end
+    assert note[start:end] == expected_matched_quote
+
+
+async def test_ambiguous_quote_matches_are_rejected(monkeypatch):
+    # If a quote appears multiple times in a multi-sentence note, do not guess
+    note = f"First HbA1c 7.1 % on {TIME}. Later HbA1c 7.1 % on {TIME}."
+    install_transport(
+        monkeypatch,
+        lambda request: reply(
+            {"kind": "laboratory", "code": "hba1c", "value": "7.1", "unit": "%"},
+            f"HbA1c 7.1 % on {TIME}",  # Appears twice in note
+        ),
+    )
+    with pytest.raises(ollama.OllamaOutputError):
+        await extraction_provider().extract(note)
+

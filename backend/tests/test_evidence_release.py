@@ -175,8 +175,12 @@ def test_additive_migration_and_orm_agree(monkeypatch):
         for c in ResponseReleaseIntent.__table__.constraints
         if c.name == "ck_release_representation"
     )
-    assert str(orm.sqltext) == clause
     operations.execute.assert_not_called()  # No row rewrite, deletion or trigger changes.
+    # ORM follows head; the historical v2 migration must retain its original scope.
+    head = migration("0010_clinical_summary_release")
+    monkeypatch.setattr(head, "op", operations)
+    head.upgrade()
+    assert str(orm.sqltext) == operations.create_check_constraint.call_args.args[2]
 
 
 @pytest.mark.parametrize("change", ["snapshot", "authorization", "body", "catalogue", "mode"])

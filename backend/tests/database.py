@@ -32,6 +32,7 @@ def migrations():
         migration("0007_response_release_intent"),
         migration("0008_evidence_release_representation"),
         migration("0009_demo_patients"),
+        migration("0010_clinical_summary_release"),
     ]
 
 

@@ -13,13 +13,16 @@ from app.schemas.verification_gate import GatedRecordText
 RELEASE_POLICY = "audited-record-release-v1"
 REPRESENTATION = "record-response-json-v1"
 EVIDENCE_REPRESENTATION = "record-evidence-json-v2"
+SUMMARY_REPRESENTATION = "clinical-summary-json-v1"
 
 
 class ReleaseIntent(StrictAuditSchema):
     id: UUID
     evaluation_event_id: UUID
     release_policy_version: Literal["audited-record-release-v1"]
-    representation_version: Literal["record-response-json-v1", "record-evidence-json-v2"]
+    representation_version: Literal[
+        "record-response-json-v1", "record-evidence-json-v2", "clinical-summary-json-v1"
+    ]
     body_digest: Digest
     recorded_at: AwareDatetime
 

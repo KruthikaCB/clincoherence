@@ -191,6 +191,51 @@ Example JSON: {"candidates":[{"fact":{"kind":"medication","medication_name":"met
 Return {"candidates": []} if no supported facts. /no_think"""
 
 
+def resolve_quote_span(text: str, quote: str) -> tuple[str, int]:
+    """Resolve quote to an exact, unique character span in text.
+
+    Tolerates minor punctuation or unicode superscript formatting from small models
+    without fuzzy-matching or guessing. Ambiguous matches are strictly rejected.
+    """
+    candidates_to_try: list[str] = [quote]
+    trimmed = quote.strip()
+    if trimmed != quote:
+        candidates_to_try.append(trimmed)
+
+    # Trailing punctuation variations:
+    if quote.endswith("."):
+        candidates_to_try.append(quote[:-1])
+    else:
+        candidates_to_try.append(quote + ".")
+
+    # Unicode superscript variations in eGFR:
+    if "\u00b2" in quote:
+        normalized = quote.replace("\u00b2", "2")
+        candidates_to_try.extend([normalized, normalized[:-1] if normalized.endswith(".") else normalized + "."])
+    if "1.73m2" in quote:
+        normalized = quote.replace("1.73m2", "1.73m\u00b2")
+        candidates_to_try.extend([normalized, normalized[:-1] if normalized.endswith(".") else normalized + "."])
+    if "1.73 m2" in quote:
+        normalized = quote.replace("1.73 m2", "1.73 m\u00b2")
+        candidates_to_try.extend([normalized, normalized[:-1] if normalized.endswith(".") else normalized + "."])
+
+    for candidate in candidates_to_try:
+        count = text.count(candidate)
+        if count == 1:
+            return candidate, text.find(candidate)
+        if count > 1:
+            raise OllamaOutputError()
+
+    # For a single-line note where the small model paraphrased the text,
+    # bind to that entire verbatim source line if unambiguous:
+    if "\n" not in text and "\r" not in text and len(text) <= 2000:
+        line = text.strip()
+        if line and text.count(line) == 1:
+            return line, text.find(line)
+
+    raise OllamaOutputError()
+
+
 class OllamaExtractionProvider:
     name = "ollama"
     version = "qwen3-0.6b-cpu-v1"
@@ -285,22 +330,7 @@ class OllamaExtractionProvider:
             batch = NoteBatch.model_validate_json(content)
             result = []
             for item in batch.candidates:
-                quote = item.source_quote
-                start = text.find(quote)
-                # Small models may paraphrase a medication quote. For a single
-                # original line only, bind to that entire verbatim source instead.
-                # Unchanged grounding below must still prove every supplied field
-                # and the unique observation time; never fuzzy-match generated text.
-                if (
-                    start < 0
-                    and item.fact.kind == "medication"
-                    and "\n" not in text
-                    and "\r" not in text
-                    and len(text) <= 2000
-                ):
-                    quote, start = text, 0
-                if start < 0 or text.find(quote, start + 1) >= 0:
-                    raise OllamaOutputError()
+                quote, start = resolve_quote_span(text, item.source_quote)
                 proposal = ExtractedCandidate(
                     fact=item.fact,
                     observed_at=item.observed_at,

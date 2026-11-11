@@ -6,6 +6,7 @@ import {
   CorrectionRequest, correctionRequest, Proposal,
 } from "./clinical-types";
 import ClinicalHistory from "./clinical-history";
+import ClinicalSummaryPanel from "./clinical-summary";
 import VerifiedRecords from "./verified-records";
 import PatientSelector, { ApiError, exact, request, useDashboardTask, uuid } from "./patient-selector";
 import { decodeRecordQuestion, ProvenanceDetails } from "./record-questions";
@@ -45,7 +46,7 @@ function message(error: unknown): string {
 type RecordAnswer = { text: string; kind: "result" | "notice" | "error"; provenance?: SyntheticProvenance[] };
 type Turn = { id: string; text?: string; question?: string; answer?: RecordAnswer };
 type Profile = { role: Account["role"]; profile_id: string };
-type PanelView = "chat" | "history" | "medications" | "consent" | "invitations" | "verified";
+type PanelView = "chat" | "history" | "medications" | "consent" | "invitations" | "verified" | "summary";
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────────
 function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient, onAddPatient, activePanel, onPanel, onSignOut, onRefreshPatients, canAdd }: {
@@ -91,6 +92,9 @@ function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient
                 <button className={`cc-sidebar-btn ${activePanel === "medications" ? "active" : ""}`} onClick={() => onPanel("medications")} disabled={!activePatient}>
                   <IcoPill /> Medications
                 </button>
+                <button className={`cc-sidebar-btn ${activePanel === "summary" ? "active" : ""}`} onClick={() => onPanel("summary")} disabled={!activePatient}>
+                  <IcoHistory /> Clinical Summary
+                </button>
                 <button className={`cc-sidebar-btn ${activePanel === "verified" ? "active" : ""}`} onClick={() => onPanel("verified")} disabled={!activePatient}>
                   <IcoVerify /> Verified Records
                 </button>
@@ -130,6 +134,9 @@ function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient
               </button>
               <button className={`cc-sidebar-btn ${activePanel === "history" ? "active" : ""}`} onClick={() => onPanel("history")} disabled={!activePatient}>
                 <IcoHistory /> History
+              </button>
+              <button className={`cc-sidebar-btn ${activePanel === "summary" ? "active" : ""}`} onClick={() => onPanel("summary")} disabled={!activePatient}>
+                <IcoHistory /> Clinical Summary
               </button>
               <button className={`cc-sidebar-btn ${activePanel === "verified" ? "active" : ""}`} onClick={() => onPanel("verified")} disabled={!activePatient}>
                 <IcoVerify /> Verified Records
@@ -586,6 +593,7 @@ export default function Conversation() {
     consent: "Practitioner Consent",
     invitations: "Patient Invitations",
     verified: "Verified Records",
+    summary: "Clinical Summary",
   };
 
   // ── Login screen ──
@@ -695,7 +703,7 @@ export default function Conversation() {
                   </div>
                 </div>
               )}
-              {activePanel !== "consent" && activePanel !== "history" && activePanel !== "verified" && (
+              {activePanel !== "consent" && activePanel !== "history" && activePanel !== "verified" && activePanel !== "summary" && (
                 <>
                   <div className="cc-chat-col">
                     {!patient && !busy && (
@@ -864,6 +872,12 @@ export default function Conversation() {
                 </div>
               )}
             </>
+          )}
+          {!showAddPatient && activePanel === "summary" && patient && (
+            <div className="cc-chat-col"><div className="cc-chat-scroll">
+              <ClinicalSummaryPanel key={`${session.account.id}:${contextVersion}:${patient}`}
+                token={session.token} patient={patient} contextSignal={context.current.signal} onDenied={onDenied} />
+            </div></div>
           )}
         </div>
       </div>
