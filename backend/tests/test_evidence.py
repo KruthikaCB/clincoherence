@@ -610,3 +610,85 @@ async def test_database_confirmed_extraction_decision_unchanged(db, api):
     assert decision.decided_by_id == account_id
     assert run.evaluation.snapshot.current_version_ids == (decision.accepted_version_id,)
     await db.rollback()
+
+
+# ── Milestone 3.1: trusted publisher allowlist and schema widening tests ──────
+
+
+def test_untrusted_publisher_rejected():
+    """An EvidenceSource with a publisher outside the allowlist must be rejected."""
+    from pydantic import ValidationError
+
+    from app.schemas.evidence import EvidenceSource
+
+    with pytest.raises(ValidationError) as exc_info:
+        EvidenceSource(
+            source_id="test-source",
+            version="v1",
+            edition="ed-1",
+            label="REAL_CLINICAL_EVIDENCE",
+            title="Some external source",
+            publisher="Untrusted Corp",
+            canonical_location="https://example.com/source",
+            locators=("section:intro",),
+            content_hash="a" * 64,
+        )
+    assert "trusted allowlist" in str(exc_info.value).lower() or "trusted" in str(
+        exc_info.value
+    ).lower()
+
+
+def test_real_clinical_evidence_label_accepted():
+    """REAL_CLINICAL_EVIDENCE label with an allowlisted publisher validates correctly."""
+    from app.schemas.evidence import EvidenceSource
+
+    source = EvidenceSource(
+        source_id="dailymed-test",
+        version="2024-09-01",
+        edition="us-fda-label-v1",
+        label="REAL_CLINICAL_EVIDENCE",
+        title="Test drug label",
+        publisher="U.S. National Library of Medicine / DailyMed",
+        canonical_location="https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm",
+        locators=("section:contraindications",),
+        content_hash="b" * 64,
+    )
+    assert source.label == "REAL_CLINICAL_EVIDENCE"
+    assert source.publisher == "U.S. National Library of Medicine / DailyMed"
+
+
+def test_https_canonical_location_accepted():
+    """A well-formed https:// canonical location passes pattern validation."""
+    from app.schemas.evidence import EvidenceSource
+
+    source = EvidenceSource(
+        source_id="dailymed-test",
+        version="2024-09-01",
+        edition="us-fda-label-v1",
+        label="REAL_CLINICAL_EVIDENCE",
+        title="Test drug label",
+        publisher="U.S. National Library of Medicine / DailyMed",
+        canonical_location="https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=abc123",
+        locators=("section:warnings",),
+        content_hash="c" * 64,
+    )
+    assert source.canonical_location.startswith("https://")
+
+
+def test_fixture_canonical_location_still_accepted():
+    """Existing fixture:// canonical locations still validate (non-regression)."""
+    from app.schemas.evidence import EvidenceSource
+
+    source = EvidenceSource(
+        source_id="synthetic-t2dm-context",
+        version="fixture-1",
+        edition="synthetic-edition-1",
+        label="SYNTHETIC_FIXTURE_ONLY",
+        title="Synthetic structured-context fixture",
+        publisher="ClinCoherence synthetic fixtures",
+        canonical_location="fixture://clincoherence/synthetic-context",
+        locators=("section:structured-context",),
+        content_hash="d" * 64,
+    )
+    assert source.canonical_location.startswith("fixture://")
+    assert source.publisher == "ClinCoherence synthetic fixtures"

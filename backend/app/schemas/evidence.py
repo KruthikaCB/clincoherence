@@ -1,4 +1,9 @@
-"""Synthetic-only evidence contracts; no clinical verdict or caller approval flag."""
+"""Evidence contracts for synthetic fixtures and versioned real external sources.
+
+No clinical verdict, caller approval flag, or prescription is ever expressed here.
+Adding a new trusted publisher requires a code change and review; a JSON fixture
+alone cannot introduce a new trusted source.
+"""
 
 from typing import Annotated, Literal
 from uuid import UUID
@@ -10,7 +15,26 @@ from app.schemas.consistency import ConsistencySchema, Finding, SkippedCheck, Sn
 Identifier = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9_.-]{0,99}$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Status = Literal["RESOLVED", "UNAVAILABLE", "NOT_APPLICABLE", "INSUFFICIENT_CONTEXT", "ERROR"]
-Label = Literal["SYNTHETIC_FIXTURE_ONLY"]
+Label = Literal["SYNTHETIC_FIXTURE_ONLY", "REAL_CLINICAL_EVIDENCE"]
+
+# Explicit allowlist — only these publishers are accepted. Adding a new publisher
+# requires a code change and deliberate review; fixture JSON cannot bypass this.
+TRUSTED_PUBLISHERS: frozenset[str] = frozenset(
+    {
+        "ClinCoherence synthetic fixtures",
+        "U.S. National Library of Medicine / DailyMed",
+    }
+)
+
+# Canonical location pattern — allows the existing fixture:// scheme and
+# well-formed https:// URIs (required for real external sources). The host
+# is lowercase; path and query characters allow mixed case to accommodate
+# real-world URL conventions (e.g. DailyMed's drugInfo.cfm paths).
+# No credentials, fragments, spaces, or control characters.
+_CANONICAL_LOCATION_PATTERN = (
+    r"^(?:fixture://[a-z0-9/_.-]+"
+    r"|https://[a-z0-9._-]+(?:/[A-Za-z0-9/_.-]*)?(?:\?[A-Za-z0-9=&._-]+)?)$"
+)
 
 
 class EvidenceSource(ConsistencySchema):
@@ -19,10 +43,19 @@ class EvidenceSource(ConsistencySchema):
     edition: Identifier
     label: Label
     title: str
-    publisher: Literal["ClinCoherence synthetic fixtures"]
-    canonical_location: str = Field(pattern=r"^fixture://[a-z0-9/_.-]+$")
+    publisher: Annotated[str, Field(min_length=1, max_length=200)]
+    canonical_location: str = Field(pattern=_CANONICAL_LOCATION_PATTERN)
     locators: tuple[str, ...]
     content_hash: Digest
+
+    @model_validator(mode="after")
+    def trusted_publisher(self) -> "EvidenceSource":
+        if self.publisher not in TRUSTED_PUBLISHERS:
+            raise ValueError(
+                "Publisher not in trusted allowlist; "
+                "adding a new trusted source requires a code change"
+            )
+        return self
 
 
 class EvidenceReference(ConsistencySchema):
