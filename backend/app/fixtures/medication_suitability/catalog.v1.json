@@ -1,0 +1,64 @@
+{
+  "catalog_version": "capstone-label-checks-2026-11-12-v1",
+  "reviewed_on": "2026-11-12",
+  "review_status": "SOURCE_VERIFIED_CLINICAL_REVIEW_PENDING",
+  "intended_use": "SYNTHETIC_EDUCATIONAL_ONLY",
+  "sources": [
+    {
+      "source_id": "metformin-label-v4",
+      "organization": "DailyMed / U.S. National Library of Medicine",
+      "title": "METFORMIN HYDROCHLORIDE tablet, film coated — REMEDYREPACK INC. label",
+      "document_version": "SPL version 4",
+      "published_on": "2026-10-26",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=bfd6ec0f-8264-4877-aa6d-f347f53bc426",
+      "stable_id": "bfd6ec0f-8264-4877-aa6d-f347f53bc426:4",
+      "sections": ["2.4", "4", "5.1"]
+    },
+    {
+      "source_id": "empagliflozin-label-v31",
+      "organization": "DailyMed / U.S. National Library of Medicine",
+      "title": "JARDIANCE — empagliflozin tablet, film coated",
+      "document_version": "SPL version 31",
+      "published_on": "2026-02-02",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=faf3dd6a-9cd0-39c2-0d2e-232cb3f67565",
+      "stable_id": "faf3dd6a-9cd0-39c2-0d2e-232cb3f67565:31",
+      "sections": ["1", "2.1", "4", "5.1", "5.2"]
+    },
+    {
+      "source_id": "semaglutide-label-v20",
+      "organization": "DailyMed / U.S. National Library of Medicine",
+      "title": "OZEMPIC — semaglutide injection, solution",
+      "document_version": "SPL version 20",
+      "published_on": "2026-06-10",
+      "url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=adec4fd2-6858-4c99-91d4-531f5f2a2d79",
+      "stable_id": "adec4fd2-6858-4c99-91d4-531f5f2a2d79:20",
+      "sections": ["4", "5.2", "5.3", "5.6", "5.7"]
+    }
+  ],
+  "rules": [
+    {
+      "rule_id": "MET-RENAL-30-v1", "medication": "metformin",
+      "source_id": "metformin-label-v4", "condition": "egfr_lt_30",
+      "description": "The label contraindicates metformin when eGFR is below 30 mL/min/1.73m2.",
+      "scope": "Recorded renal contraindication check; no treatment-change instruction."
+    },
+    {
+      "rule_id": "MET-RENAL-REVIEW-v1", "medication": "metformin",
+      "source_id": "metformin-label-v4", "condition": "egfr_30_through_45",
+      "description": "The label discourages initiation in the 30–45 eGFR range and calls for benefit-risk review of existing therapy below 45.",
+      "scope": "At exactly 45 this demo conservatively requires review; recorded medication is not proof of current therapy."
+    },
+    {
+      "rule_id": "EMPA-GLYCEMIC-30-v1", "medication": "empagliflozin",
+      "source_id": "empagliflozin-label-v31", "condition": "egfr_lt_30",
+      "description": "The label does not recommend empagliflozin for glycemic control when eGFR is below 30 mL/min/1.73m2.",
+      "scope": "Glycemic-control limitation only; not a general contraindication or an assessment of heart-failure/CKD indications."
+    },
+    {
+      "rule_id": "SEMA-MTC-MEN2-v1", "medication": "semaglutide",
+      "source_id": "semaglutide-label-v20", "condition": "explicit_mtc_or_men2",
+      "description": "The Ozempic label contraindicates use with personal/family MTC history or MEN2.",
+      "scope": "Exact documented history statements only; absence of such a statement is UNKNOWN, not a negative screen."
+    }
+  ]
+}

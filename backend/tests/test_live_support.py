@@ -73,8 +73,10 @@ def test_migration_0008_remains_in_shared_live_schema_upgrade_chain():
     assert evidence.down_revision == "0007_response_release_intent"
     demo = next(item for item in revisions if item.revision == "0009_demo_patients")
     assert demo.down_revision == evidence.revision
-    assert revisions[-1].revision == "0010_clinical_summary_release"
-    assert revisions[-1].down_revision == demo.revision
+    summary = next(item for item in revisions if item.revision == "0010_clinical_summary_release")
+    assert summary.down_revision == demo.revision
+    assert revisions[-1].revision == "0011_clinical_fact_reviews"
+    assert revisions[-1].down_revision == summary.revision
 
 
 async def test_observer_rejects_ownership_failure_before_event_lookup(monkeypatch, run):

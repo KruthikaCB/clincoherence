@@ -1,0 +1,6 @@
+Diagnosis: type_2_diabetes at 2026-01-05T09:00:00Z
+HbA1c: 8.2 % at 2026-01-05T09:00:00Z
+HbA1c: 7.6 % at 2026-02-05T09:00:00Z
+Medication: metformin at 2026-02-05T09:00:00Z
+eGFR: 42 mL/min/1.73m2 at 2026-02-05T09:00:00Z
+Symptom: fatigue; description: Deliberately incorrect synthetic symptom proposal at 2026-02-05T09:00:00Z

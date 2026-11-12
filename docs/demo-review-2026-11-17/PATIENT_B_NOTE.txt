@@ -1,0 +1,4 @@
+Diagnosis: type_2_diabetes at 2026-01-10T09:00:00Z
+HbA1c: 8.8 % at 2026-02-10T09:00:00Z
+eGFR: 25 mL/min/1.73m2 at 2026-02-10T09:00:00Z
+History: family_history; description: family history of medullary thyroid carcinoma at 2026-02-10T09:00:00Z

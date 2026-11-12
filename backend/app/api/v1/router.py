@@ -14,6 +14,7 @@ from app.api.v1.consents import router as consent_router
 from app.api.v1.demo_patients import router as demo_patients_router
 from app.api.v1.demo_registration import router as demo_registration_router
 from app.api.v1.invitations import router as invitations_router
+from app.api.v1.medication_suitability import router as medication_suitability_router
 from app.api.v1.patient_discovery import router as patient_discovery_router
 from app.api.v1.record_questions import router as record_questions_router
 from app.api.v1.verified_records import router as verified_records_router
@@ -30,5 +31,6 @@ api_v1_router.include_router(patient_discovery_router)
 api_v1_router.include_router(verified_records_router)
 api_v1_router.include_router(record_questions_router)
 api_v1_router.include_router(clinical_summary_router)
+api_v1_router.include_router(medication_suitability_router)
 
 # Patient-record and conversation routers will be added in later milestones.

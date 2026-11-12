@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     APP_ENV: str = "production"
     ENABLE_DEMO_REGISTRATION: bool = False
     ENABLE_DEMO_PATIENTS: bool = False
+    # Migration 0011 is not validated. Existing demo paths must not expose M8 APIs.
+    ENABLE_CLINICIAN_FACT_REVIEW: bool = False
 
     # --- Database ---
     DATABASE_URL: str = (

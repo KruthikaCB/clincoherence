@@ -1,0 +1,18 @@
+# Nine-minute demonstration
+
+Prerequisite: approved, successfully rehearsed synthetic setup from `DEMO_RUNBOOK.md`. B is prepopulated. For a live A extraction use an approved fresh synthetic identifier; do not delete previous records. Keep this document and the two note files open.
+
+| Time | Click / action | Say and verify |
+|---|---|---|
+| 0:00–0:40 | Practitioner sign-in; select synthetic A | “ClinCoherence is an educational Type 2 Diabetes record-coherence prototype. This is an invented patient. Authentication and patient scope remain enforced.” Keep credentials off the projector. |
+| 0:40–2:00 | Clinical Notes → Add Clinical Note; paste A note; submit; Accept five valid proposals; Reject fatigue | “Extraction proposes facts. Each proposal requires a separate decision. The repeatable demo uses the mock provider; local Ollama is an existing alternative. Rejecting this intentionally incorrect symptom keeps it out of accepted records.” Expect six proposals, five accepted. |
+| 2:00–2:45 | Clinical History; open a fact's history and expand Technical details | “The observation date is separate from the entry date. Here are source and version identifiers. Corrections append versions rather than silently rewriting the old fact.” Do not create an unscripted correction during the presentation. |
+| 2:45–3:10 | Medications | “Metformin is recorded. A record does not establish current use, adherence or an instruction to continue.” No dose is supplied in this scenario. |
+| 3:10–3:55 | Clinical Summary → Request clinical summary | Show January HbA1c 8.2%, February 7.6%, eGFR 42. “This is a recorded 0.6 percentage-point decrease, not proof of treatment effectiveness or an individualized target.” |
+| 3:55–4:35 | Verified Records; select the accepted February HbA1c and click Request Verified Record | “Verification checks this restatement against the accepted record; it is not an external clinical diagnosis or clinician approval. Its source provenance is available in the Clinical History details just shown.” This panel displays the verified text; it does not have an expanded provenance control. |
+| 4:35–6:15 | Medication Suitability → Assess synthetic scenario; expand facts and rules | “This is explicitly a synthetic educational label check. M8 clinician approval is disabled. Metformin requires renal review here; the other two cards remain insufficient information. Missing information never becomes a favorable recommendation.” Show the DailyMed version, sections and exact fact IDs. |
+| 6:15–6:50 | Point to missing information and evidence boundaries | “The engine uses deterministic rules, not an LLM drug suggestion. No allergy or MTC/MEN2 statement is not the same as a negative history. No drug receives positive clearance.” |
+| 6:50–8:10 | Select B; open Medication Suitability; request again | Old cards must disappear. “B has explicitly recorded eGFR 25 and family MTC history. Metformin and the Ozempic-labeled semaglutide check are not suitable under these documented rules. Empagliflozin shows a glycemic-control caution; that does not decide heart-failure or CKD use.” Show B's patient identifier and source facts. |
+| 8:10–9:00 | Expand assessment boundaries; conclude | “This does not prescribe, calculate a dose or change treatment. A clinician must assess current information, indication and all contraindications. ADA ranking, comprehensive interactions and separately clinician-approved recommendations are future work.” |
+
+If any stage fails, use the declared screenshot backup. Do not improvise clinical facts or present prerecorded results as a live calculation. Keep evidence links optional so lack of internet does not interrupt the local catalog demonstration.
