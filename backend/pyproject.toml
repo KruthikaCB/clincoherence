@@ -54,7 +54,7 @@ where = ["."]
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["fixtures/evidence/*.json"]
+app = ["fixtures/evidence/*.json", "fixtures/medication_suitability/*.json"]
 
 # --- Tool Configuration ---
 

@@ -1,0 +1,25 @@
+.panel { padding: 1.25rem; color: #193332; max-width: 1500px; margin: 0 auto; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.header h2 { font-size: 1.4rem; font-weight: 700; margin: .2rem 0 .6rem; }
+.eyebrow { letter-spacing: .1em; font-size: .65rem; font-weight: 800; color: #04786d; }
+.identifier { overflow-wrap: anywhere; font-family: monospace; font-size: .68rem; color: #526768; }
+.notice { border: 1px solid #8ecdc5; background: #f0faf8; border-radius: 10px; padding: 1rem; font-size: .82rem; }
+.notice p { margin-top: .4rem; line-height: 1.6; }
+.meta, .empty { font-size: .8rem; color: #526768; margin: 1rem 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(265px, 1fr)); gap: 1rem; align-items: start; }
+.card { border: 1px solid #d5e3df; border-radius: 12px; padding: 1.1rem; background: white; box-shadow: 0 3px 12px #123a3010; min-width: 0; }
+.card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: .8rem; }
+.card h4 { font-weight: 700; margin-top: 1rem; font-size: .8rem; }
+.card p, .card li { font-size: .78rem; line-height: 1.6; margin-top: .5rem; overflow-wrap: anywhere; }
+.card ul { padding-left: 1rem; list-style: disc; }
+.card .badge { padding: .45rem .65rem; border-radius: 7px; font-size: .65rem; font-weight: 800; line-height: 1.5; }
+.negative { color: #8e263d; background: #fff0f2; border: 1px solid #f1c5ce; }
+.caution { color: #785300; background: #fff6df; border: 1px solid #e8d4a0; }
+.unknown { color: #40576b; background: #edf3f8; border: 1px solid #ccdae6; }
+.card .scope { font-size: .68rem; color: #607171; }
+.card details, .footer { border-top: 1px solid #e1e9e6; margin-top: 1rem; padding-top: .8rem; font-size: .78rem; }
+.card summary, .footer summary { cursor: pointer; font-weight: 650; }
+.fact { margin-top: .7rem; padding: .65rem; background: #f7faf9; border-radius: 6px; }
+.fact a { color: #006d65; text-decoration: underline; }
+.card .identifier { font-size: .65rem; }
+.footer li { margin: .5rem 0; }

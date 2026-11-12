@@ -44,6 +44,10 @@ def create_app() -> FastAPI:
     from app.api.v1.router import api_v1_router
 
     app.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
+    if settings.ENABLE_CLINICIAN_FACT_REVIEW:
+        from app.api.v1.clinical_fact_reviews import router as review_router
+
+        app.include_router(review_router, prefix=settings.API_V1_PREFIX)
 
     # Health check endpoint (outside versioned API)
     @app.get("/health", tags=["health"])

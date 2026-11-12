@@ -7,6 +7,7 @@ import {
 } from "./clinical-types";
 import ClinicalHistory from "./clinical-history";
 import ClinicalSummaryPanel from "./clinical-summary";
+import MedicationSuitabilityPanel from "./medication-suitability";
 import VerifiedRecords from "./verified-records";
 import PatientSelector, { ApiError, exact, request, useDashboardTask, uuid } from "./patient-selector";
 import { decodeRecordQuestion, ProvenanceDetails } from "./record-questions";
@@ -46,7 +47,7 @@ function message(error: unknown): string {
 type RecordAnswer = { text: string; kind: "result" | "notice" | "error"; provenance?: SyntheticProvenance[] };
 type Turn = { id: string; text?: string; question?: string; answer?: RecordAnswer };
 type Profile = { role: Account["role"]; profile_id: string };
-type PanelView = "chat" | "history" | "medications" | "consent" | "invitations" | "verified" | "summary";
+type PanelView = "chat" | "history" | "medications" | "consent" | "invitations" | "verified" | "summary" | "suitability";
 
 // ─── Sidebar ────────────────────────────────────────────────────────────────────
 function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient, onAddPatient, activePanel, onPanel, onSignOut, onRefreshPatients, canAdd }: {
@@ -91,6 +92,9 @@ function Sidebar({ session, patients, demoLabels, activePatient, onSelectPatient
                 </button>
                 <button className={`cc-sidebar-btn ${activePanel === "medications" ? "active" : ""}`} onClick={() => onPanel("medications")} disabled={!activePatient}>
                   <IcoPill /> Medications
+                </button>
+                <button className={`cc-sidebar-btn ${activePanel === "suitability" ? "active" : ""}`} onClick={() => onPanel("suitability")} disabled={!activePatient}>
+                  <IcoShield /> Medication Suitability
                 </button>
                 <button className={`cc-sidebar-btn ${activePanel === "summary" ? "active" : ""}`} onClick={() => onPanel("summary")} disabled={!activePatient}>
                   <IcoHistory /> Clinical Summary
@@ -594,6 +598,7 @@ export default function Conversation() {
     invitations: "Patient Invitations",
     verified: "Verified Records",
     summary: "Clinical Summary",
+    suitability: "Medication Suitability",
   };
 
   // ── Login screen ──
@@ -879,6 +884,13 @@ export default function Conversation() {
                 token={session.token} patient={patient} contextSignal={context.current.signal} onDenied={onDenied} />
             </div></div>
           )}
+          {!showAddPatient && activePanel === "suitability" && patient && session.account.role === "practitioner" && (
+            <div className="cc-chat-col"><div className="cc-chat-scroll">
+              <MedicationSuitabilityPanel key={`${session.account.id}:${contextVersion}:${patient}`}
+                token={session.token} patient={patient} patientLabel={patientLabel}
+                contextSignal={context.current.signal} onDenied={onDenied} />
+            </div></div>
+          )}
         </div>
       </div>
     </div>
@@ -980,7 +992,7 @@ function ChatInput({ tab, onTab, text, onText, busy, patient, onSend, token, onD
               maxLength={16000}
               rows={2}
               disabled={busy}
-              placeholder="Enter a synthetic clinical note, e.g. HbA1c: 7.1% at 2026-01-01T10:00:00Z"
+              placeholder="Enter a synthetic clinical note, e.g. HbA1c: 7.1 % at 2026-01-01T10:00:00Z"
               aria-label="Clinical note"
             />
             <button className="cc-send-btn" type="submit" disabled={busy || !text.trim()} aria-label="Submit note for extraction">

@@ -22,6 +22,9 @@ from app.core.database import Base
 class ClinicalFactVersion(Base):
     __tablename__ = "clinical_fact_versions"
     __table_args__ = (
+        UniqueConstraint(
+            "id", "fact_id", "patient_id", "status", name="uq_fact_review_target"
+        ),
         UniqueConstraint("fact_id", "version", name="uq_clinical_fact_version"),
         UniqueConstraint(
             "id",
